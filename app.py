@@ -121,7 +121,7 @@ if 'logged_in' not in st.session_state:
 
 # Lista de categorias dinâmica na sessão
 if 'categorias' not in st.session_state:
-    st.session_state['categorias'] = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros"]
+    st.session_state['categorias'] = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros", "Parcelamentos", "Esportes"]
 
 # --- 6. TELA DE LOGIN & CADASTRO ---
 def tela_login():
@@ -240,15 +240,15 @@ def main_app():
                 st.subheader("⚠️ Vencimentos Próximos")
                 vencendo = df_mes[(df_mes['status'] == 'Pendente') & (df_mes['tipo'] == 'Despesa') & (df_mes['data'].dt.date <= date.today() + timedelta(days=3))]
                 if not vencendo.empty:
-                    for _, r in vencendo.iterrows(): st.warning(f"{r['data'].strftime('%d/%m')} - {r['nome']} (R$ {formatar_moeda(r['valor'])})")
+                    for _, r in vencendo.iterrows(): st.warning(f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']} (R$ {formatar_moeda(r['valor'])})")
                 else: st.success("Tudo em dia!")
             with col_d:
                 st.subheader("⏳ Confirmar Pagamento")
                 df_p = df[(df['status'] == 'Pendente') & (df['tipo'] != 'Investimento')].sort_values('data')
                 if not df_p.empty:
-                    opts = {f"{r['data'].strftime('%d/%m')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
+                    opts = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
                     sel = st.selectbox("Lançamento:", list(opts.keys()))
-                    dt_pago = st.date_input("Data do Pagamento:", value=date.today())
+                    dt_pago = st.date_input("Data do Pagamento:", value=date.today(), format="DD/MM/YYYY")
                     if st.button("✅ Confirmar Pago", type="primary", use_container_width=True):
                         confirmar_transacao(opts[sel], dt_pago)
                         st.rerun()
@@ -260,12 +260,11 @@ def main_app():
         with t1:
             with st.form("f_g"):
                 c1, c2 = st.columns(2)
-                d_l = c1.date_input("Data", date.today())
+                d_l = c1.date_input("Data", date.today(), format="DD/MM/YYYY")
                 n_l = c2.text_input("Descrição")
                 c3, c4, c5, c6 = st.columns(4)
-                v_l = c3.number_input("Valor", min_value=0.0)
+                v_l = c3.number_input("Valor", min_value=0.0, format="%.2f", step=0.01)
                 
-                # Categoria agora vem da lista dinâmica
                 ct_l = c4.selectbox("Categoria", st.session_state['categorias'])
                 tp_l = c5.selectbox("Tipo", ["Despesa", "Receita"])
                 st_l = c6.selectbox("Status", ["Pago", "Pendente"])
@@ -278,23 +277,20 @@ def main_app():
             df_t = ler_transacoes(USER_ID)
             if not df_t.empty:
                 df_t['data'] = pd.to_datetime(df_t['data']).dt.date
-                df_t['Excluir'] = False 
                 
                 col_config_lancamentos = {
                     "id": None, 
                     "user_id": None, 
                     "origem_recorrencia_id": None, 
-                    "data": st.column_config.DateColumn("Data", required=True),
+                    "data": st.column_config.DateColumn("Data", required=True, format="DD/MM/YYYY"),
                     "nome": st.column_config.TextColumn("Descrição", required=True),
-                    "valor": st.column_config.NumberColumn("Valor", required=True),
-                    # Aplicação da lista dinâmica de categorias
+                    "valor": st.column_config.NumberColumn("Valor", required=True, format="%.2f"),
                     "categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state['categorias']),
                     "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
-                    "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"]),
-                    "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
+                    "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
                 }
 
-                st.info("💡 Dica: Dê um duplo clique nas colunas Categoria e Tipo para abrir a lista de opções.")
+                st.info("💡 Dica: Para excluir um item, selecione a linha clicando na lateral esquerda e aperte Delete no teclado.")
 
                 ed = st.data_editor(
                     df_t[df_t['tipo'] != 'Investimento'], 
@@ -304,21 +300,22 @@ def main_app():
                     column_config=col_config_lancamentos
                 )
                 
-                if st.button("💾 Salvar Alterações / Remover Excluídos", type="primary"):
-                    linhas_para_excluir = ed[ed['Excluir'] == True]
-                    for _, row in linhas_para_excluir.iterrows():
-                        if pd.notna(row.get('id')):
-                            try:
-                                deletar_transacao(row['id'])
-                            except Exception:
-                                pass 
+                if st.button("💾 Salvar Alterações", type="primary"):
+                    # Lógica de exclusão nativa (identifica IDs removidos da tela)
+                    ids_originais = set(df_t['id'].dropna())
+                    ids_editados = set(ed['id'].dropna())
+                    ids_excluidos = ids_originais - ids_editados
+                    
+                    for id_del in ids_excluidos:
+                        try:
+                            deletar_transacao(id_del)
+                        except Exception:
+                            pass 
 
-                    df_salvar = ed[ed['Excluir'] == False].copy()
-                    df_salvar = df_salvar.dropna(subset=['nome', 'valor'])
-                    df_salvar = df_salvar.drop(columns=['Excluir'])
+                    df_salvar = ed.dropna(subset=['nome', 'valor'])
                     atualizar_transacoes(USER_ID, df_salvar)
                     
-                    st.success("Alterações salvas e registros limpos!")
+                    st.success("Alterações salvas!")
                     st.rerun()
 
     elif menu == "Investimentos":
@@ -326,9 +323,9 @@ def main_app():
         t1, t2 = st.tabs(["➕ Novo Aporte", "✏️ Carteira"])
         with t1:
             with st.form("f_i"):
-                d_i = st.date_input("Data", date.today())
+                d_i = st.date_input("Data", date.today(), format="DD/MM/YYYY")
                 n_i = st.text_input("Descrição")
-                v_i = st.number_input("Valor", min_value=0.0)
+                v_i = st.number_input("Valor", min_value=0.0, format="%.2f", step=0.01)
                 ct_i = st.selectbox("Tipo", ["Reserva de Emergência", "Renda Fixa", "Ações", "Cripto"])
                 if st.form_submit_button("Investir"):
                     adicionar_transacao(USER_ID, d_i, n_i, v_i, ct_i, "Investimento", "Pago")
@@ -337,35 +334,39 @@ def main_app():
             df_i = ler_transacoes(USER_ID)
             df_i = df_i[df_i['tipo'] == 'Investimento']
             if not df_i.empty:
-                st.dataframe(df_i[['data', 'nome', 'valor', 'categoria']], use_container_width=True, hide_index=True)
+                st.dataframe(
+                    df_i[['data', 'nome', 'valor', 'categoria']], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "nome": st.column_config.TextColumn("Descrição"),
+                        "valor": st.column_config.NumberColumn("Valor", format="%.2f"),
+                        "categoria": st.column_config.TextColumn("Tipo")
+                    }
+                )
 
     elif menu == "Configurar Recorrências":
         st.title("⚙️ Contas Fixas e Parâmetros")
         
-        # Criação da nova aba de Categorias
         t1, t2 = st.tabs(["⚙️ Contas Fixas", "🏷️ Categorias"])
         
         with t1:
             df_r = ler_recorrencias(USER_ID)
             
-            if 'Excluir' not in df_r.columns:
-                df_r['Excluir'] = False
-
             col_config_recorrencias = {
                 "id": None, 
                 "user_id": None, 
                 "nome": st.column_config.TextColumn("Descrição", required=True),
-                "valor": st.column_config.NumberColumn("Valor", required=True),
+                "valor": st.column_config.NumberColumn("Valor", required=True, format="%.2f"),
                 "dia_vencimento": st.column_config.NumberColumn("Dia de Vencimento", min_value=1, max_value=31, required=True),
-                # Aplicação da lista dinâmica de categorias
                 "categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state['categorias']),
                 "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
                 "ativo": st.column_config.CheckboxColumn("Ativo"),
-                "data_limite": st.column_config.DateColumn("Data Limite"),
-                "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
+                "data_limite": st.column_config.DateColumn("Data Limite", format="DD/MM/YYYY")
             }
 
-            st.info("💡 Dica: Dê um duplo clique nas colunas Categoria e Tipo para abrir a lista de opções.")
+            st.info("💡 Dica: Para excluir, selecione a linha na lateral e aperte Delete no teclado.")
 
             ed_r = st.data_editor(
                 df_r, 
@@ -375,32 +376,30 @@ def main_app():
                 column_config=col_config_recorrencias
             )
             
-            if st.button("Salvar Recorrências / Remover Excluídos", type="primary"):
-                linhas_para_excluir_r = ed_r[ed_r['Excluir'] == True]
-                for _, row in linhas_para_excluir_r.iterrows():
-                    if pd.notna(row.get('id')):
-                        try:
-                            deletar_recorrencia(row['id'])
-                        except Exception:
-                            pass
+            if st.button("💾 Salvar Recorrências", type="primary"):
+                # Lógica de exclusão nativa
+                ids_originais_r = set(df_r['id'].dropna())
+                ids_editados_r = set(ed_r['id'].dropna())
+                ids_excluidos_r = ids_originais_r - ids_editados_r
                 
-                df_salvar_r = ed_r[ed_r['Excluir'] == False].copy()
-                df_salvar_r = df_salvar_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
-                df_salvar_r = df_salvar_r.drop(columns=['Excluir'])
+                for id_del in ids_excluidos_r:
+                    try:
+                        deletar_recorrencia(id_del)
+                    except Exception:
+                        pass
+                
+                df_salvar_r = ed_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
                 atualizar_recorrencias(USER_ID, df_salvar_r)
                 
-                st.success("Recorrências atualizadas e registros limpos!")
+                st.success("Recorrências atualizadas!")
                 st.rerun()
 
-        # --- NOVA ABA DE CATEGORIAS ---
         with t2:
             st.subheader("Gerenciar Categorias")
             st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
             
-            # Converte a lista da sessão para um DataFrame
             df_categorias = pd.DataFrame(st.session_state['categorias'], columns=['Categoria'])
             
-            # Grid editável para as categorias
             ed_categorias = st.data_editor(
                 df_categorias,
                 num_rows="dynamic",
@@ -409,12 +408,9 @@ def main_app():
             )
             
             if st.button("💾 Salvar Categorias", type="primary"):
-                # Pega as categorias editadas, remove vazios e espaços extras
                 novas_categorias = ed_categorias['Categoria'].dropna().str.strip()
-                # Remove strings vazias e duplicadas, transforma de volta em lista
                 novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
                 
-                # Salva na sessão
                 st.session_state['categorias'] = novas_categorias
                 st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo nas outras abas.")
                 st.rerun()
