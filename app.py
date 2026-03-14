@@ -215,7 +215,6 @@ def main_app():
             mes_atual = date.today().strftime("%Y-%m")
             df_mes = df[df['data'].dt.strftime('%Y-%m') == mes_atual]
             
-            # Métricas
             df_pago = df[df['status'] == 'Pago']
             saldo = df_pago[df_pago['tipo'] == 'Receita']['valor'].sum() - df_pago[df_pago['tipo'] == 'Despesa']['valor'].sum()
             
@@ -224,7 +223,6 @@ def main_app():
             c2.metric("Receitas (Mês)", f"R$ {formatar_moeda(df_mes[(df_mes['tipo'] == 'Receita') & (df_mes['status'] == 'Pago')]['valor'].sum())}")
             c3.metric("Despesas (Mês)", f"R$ {formatar_moeda(df_mes[(df_mes['tipo'] == 'Despesa') & (df_mes['status'] == 'Pago')]['valor'].sum())}", delta_color="inverse")
 
-            # Gráficos
             col_g1, col_g2 = st.columns(2)
             with col_g1:
                 df_cat = df_mes[df_mes['tipo'] == 'Despesa'].groupby('categoria')['valor'].sum().reset_index()
@@ -246,7 +244,6 @@ def main_app():
                 st.subheader("⏳ Confirmar Pagamento")
                 df_p = df[(df['status'] == 'Pendente') & (df['tipo'] != 'Investimento')].sort_values('data')
                 if not df_p.empty:
-                    # Usando formulário para o confirmador não piscar ao trocar datas/opções
                     with st.form("form_confirmar_pagamento"):
                         opts = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
                         sel = st.selectbox("Lançamento:", list(opts.keys()))
@@ -279,7 +276,29 @@ def main_app():
             df_t = ler_transacoes(USER_ID)
             if not df_t.empty:
                 df_t['data'] = pd.to_datetime(df_t['data']).dt.date
+                # Ordenação padrão do mais recente para o mais antigo
+                df_t = df_t.sort_values(by='data', ascending=False)
                 
+                # Separar investimentos para não perder na hora de salvar
+                df_t_investimentos = df_t[df_t['tipo'] == 'Investimento']
+                df_t_lancamentos = df_t[df_t['tipo'] != 'Investimento']
+
+                # --- FILTROS ---
+                with st.expander("🔍 Filtros de Busca", expanded=False):
+                    c_f1, c_f2, c_f3 = st.columns(3)
+                    f_texto = c_f1.text_input("Buscar por Descrição")
+                    f_cat = c_f2.multiselect("Filtrar Categoria", st.session_state['categorias'])
+                    f_status = c_f3.multiselect("Filtrar Status", ["Pago", "Pendente"])
+
+                # Aplicação dos Filtros
+                df_filtrado = df_t_lancamentos.copy()
+                if f_texto:
+                    df_filtrado = df_filtrado[df_filtrado['nome'].str.contains(f_texto, case=False, na=False)]
+                if f_cat:
+                    df_filtrado = df_filtrado[df_filtrado['categoria'].isin(f_cat)]
+                if f_status:
+                    df_filtrado = df_filtrado[df_filtrado['status'].isin(f_status)]
+
                 col_config_lancamentos = {
                     "id": None, 
                     "user_id": None, 
@@ -292,12 +311,11 @@ def main_app():
                     "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
                 }
 
-                # Tabela de Lançamentos agora dentro de um formulário
                 with st.form("form_editar_lancamentos"):
-                    st.info("💡 Dica: Para excluir um item, selecione a linha clicando na lateral esquerda e aperte Delete no teclado.")
+                    st.info("💡 **Dicas de Uso:**\n- **Ordenar:** Clique direto no título da coluna (ex: *Data* ou *Valor*) para colocar em ordem crescente ou decrescente.\n- **Excluir:** Selecione a linha clicando na margem esquerda e aperte a tecla `Delete`.")
 
                     ed = st.data_editor(
-                        df_t[df_t['tipo'] != 'Investimento'], 
+                        df_filtrado, 
                         use_container_width=True, 
                         hide_index=True, 
                         num_rows="dynamic", 
@@ -305,19 +323,24 @@ def main_app():
                     )
                     
                     if st.form_submit_button("💾 Salvar Alterações", type="primary"):
-                        ids_originais = set(df_t['id'].dropna())
+                        ids_originais = set(df_filtrado['id'].dropna())
                         ids_editados = set(ed['id'].dropna())
                         ids_excluidos = ids_originais - ids_editados
                         
                         for id_del in ids_excluidos:
-                            try:
-                                deletar_transacao(id_del)
-                            except Exception:
-                                pass 
+                            try: deletar_transacao(id_del)
+                            except Exception: pass 
 
-                        df_salvar = ed.dropna(subset=['nome', 'valor'])
-                        atualizar_transacoes(USER_ID, df_salvar)
+                        # Remonta a tabela completa com as edições e os dados ocultos pelo filtro
+                        ids_no_filtro = df_filtrado['id'].dropna().tolist()
+                        df_restante = df_t_lancamentos[~df_t_lancamentos['id'].isin(ids_no_filtro)]
                         
+                        df_salvar_parcial = ed.dropna(subset=['nome', 'valor'])
+                        
+                        # Concatena o que não estava no filtro + o que foi editado no filtro + investimentos
+                        df_salvar_final = pd.concat([df_restante, df_salvar_parcial, df_t_investimentos], ignore_index=True)
+
+                        atualizar_transacoes(USER_ID, df_salvar_final)
                         st.success("Alterações salvas!")
                         st.rerun()
 
@@ -334,9 +357,17 @@ def main_app():
                     adicionar_transacao(USER_ID, d_i, n_i, v_i, ct_i, "Investimento", "Pago")
                     st.rerun()
         with t2:
-            df_i = ler_transacoes(USER_ID)
-            df_i = df_i[df_i['tipo'] == 'Investimento']
+            df_i_full = ler_transacoes(USER_ID)
+            df_i = df_i_full[df_i_full['tipo'] == 'Investimento']
             if not df_i.empty:
+                df_i['data'] = pd.to_datetime(df_i['data']).dt.date
+                df_i = df_i.sort_values(by='data', ascending=False)
+                
+                with st.expander("🔍 Filtros", expanded=False):
+                    f_i_texto = st.text_input("Buscar Investimento")
+                if f_i_texto:
+                    df_i = df_i[df_i['nome'].str.contains(f_i_texto, case=False, na=False)]
+
                 st.dataframe(
                     df_i[['data', 'nome', 'valor', 'categoria']], 
                     use_container_width=True, 
@@ -355,8 +386,24 @@ def main_app():
         t1, t2 = st.tabs(["⚙️ Contas Fixas", "🏷️ Categorias"])
         
         with t1:
-            df_r = ler_recorrencias(USER_ID)
+            df_r_full = ler_recorrencias(USER_ID)
             
+            if not df_r_full.empty:
+                df_r_full = df_r_full.sort_values(by='nome', ascending=True)
+
+            with st.expander("🔍 Filtros de Busca", expanded=False):
+                c_rf1, c_rf2 = st.columns(2)
+                f_r_texto = c_rf1.text_input("Buscar por Descrição")
+                f_r_cat = c_rf2.multiselect("Filtrar Categoria", st.session_state['categorias'])
+
+            df_r_filtrado = df_r_full.copy() if not df_r_full.empty else df_r_full
+            
+            if not df_r_filtrado.empty:
+                if f_r_texto:
+                    df_r_filtrado = df_r_filtrado[df_r_filtrado['nome'].str.contains(f_r_texto, case=False, na=False)]
+                if f_r_cat:
+                    df_r_filtrado = df_r_filtrado[df_r_filtrado['categoria'].isin(f_r_cat)]
+
             col_config_recorrencias = {
                 "id": None, 
                 "user_id": None, 
@@ -369,12 +416,11 @@ def main_app():
                 "data_limite": st.column_config.DateColumn("Data Limite", format="DD/MM/YYYY")
             }
 
-            # Tabela de Recorrências agora dentro de um formulário
             with st.form("form_editar_recorrencias"):
-                st.info("💡 Dica: Para excluir, selecione a linha na lateral e aperte Delete no teclado.")
+                st.info("💡 **Dicas:** Clique direto no título da coluna (ex: *Valor* ou *Dia de Vencimento*) para ordenar. Para excluir uma linha inteira, selecione-a na margem e aperte `Delete`.")
 
                 ed_r = st.data_editor(
-                    df_r, 
+                    df_r_filtrado, 
                     num_rows="dynamic",
                     use_container_width=True, 
                     hide_index=True, 
@@ -382,24 +428,27 @@ def main_app():
                 )
                 
                 if st.form_submit_button("💾 Salvar Recorrências", type="primary"):
-                    ids_originais_r = set(df_r['id'].dropna())
+                    ids_originais_r = set(df_r_filtrado['id'].dropna())
                     ids_editados_r = set(ed_r['id'].dropna())
                     ids_excluidos_r = ids_originais_r - ids_editados_r
                     
                     for id_del in ids_excluidos_r:
-                        try:
-                            deletar_recorrencia(id_del)
-                        except Exception:
-                            pass
+                        try: deletar_recorrencia(id_del)
+                        except Exception: pass
                     
-                    df_salvar_r = ed_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
-                    atualizar_recorrencias(USER_ID, df_salvar_r)
+                    # Reconstruir tabela com dados ocultos
+                    ids_no_filtro_r = df_r_filtrado['id'].dropna().tolist()
+                    df_restante_r = df_r_full[~df_r_full['id'].isin(ids_no_filtro_r)]
+                    
+                    df_salvar_parcial_r = ed_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
+                    df_salvar_final_r = pd.concat([df_restante_r, df_salvar_parcial_r], ignore_index=True)
+
+                    atualizar_recorrencias(USER_ID, df_salvar_final_r)
                     
                     st.success("Recorrências atualizadas!")
                     st.rerun()
 
         with t2:
-            # Tabela de Categorias agora dentro de um formulário
             with st.form("form_editar_categorias"):
                 st.subheader("Gerenciar Categorias")
                 st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
