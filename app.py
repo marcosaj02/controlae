@@ -246,12 +246,14 @@ def main_app():
                 st.subheader("⏳ Confirmar Pagamento")
                 df_p = df[(df['status'] == 'Pendente') & (df['tipo'] != 'Investimento')].sort_values('data')
                 if not df_p.empty:
-                    opts = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
-                    sel = st.selectbox("Lançamento:", list(opts.keys()))
-                    dt_pago = st.date_input("Data do Pagamento:", value=date.today(), format="DD/MM/YYYY")
-                    if st.button("✅ Confirmar Pago", type="primary", use_container_width=True):
-                        confirmar_transacao(opts[sel], dt_pago)
-                        st.rerun()
+                    # Usando formulário para o confirmador não piscar ao trocar datas/opções
+                    with st.form("form_confirmar_pagamento"):
+                        opts = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
+                        sel = st.selectbox("Lançamento:", list(opts.keys()))
+                        dt_pago = st.date_input("Data do Pagamento:", value=date.today(), format="DD/MM/YYYY")
+                        if st.form_submit_button("✅ Confirmar Pago", type="primary", use_container_width=True):
+                            confirmar_transacao(opts[sel], dt_pago)
+                            st.rerun()
         else: st.info("Sem lançamentos ainda.")
 
     elif menu == "Lançamentos":
@@ -290,33 +292,34 @@ def main_app():
                     "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
                 }
 
-                st.info("💡 Dica: Para excluir um item, selecione a linha clicando na lateral esquerda e aperte Delete no teclado.")
+                # Tabela de Lançamentos agora dentro de um formulário
+                with st.form("form_editar_lancamentos"):
+                    st.info("💡 Dica: Para excluir um item, selecione a linha clicando na lateral esquerda e aperte Delete no teclado.")
 
-                ed = st.data_editor(
-                    df_t[df_t['tipo'] != 'Investimento'], 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    num_rows="dynamic", 
-                    column_config=col_config_lancamentos
-                )
-                
-                if st.button("💾 Salvar Alterações", type="primary"):
-                    # Lógica de exclusão nativa (identifica IDs removidos da tela)
-                    ids_originais = set(df_t['id'].dropna())
-                    ids_editados = set(ed['id'].dropna())
-                    ids_excluidos = ids_originais - ids_editados
+                    ed = st.data_editor(
+                        df_t[df_t['tipo'] != 'Investimento'], 
+                        use_container_width=True, 
+                        hide_index=True, 
+                        num_rows="dynamic", 
+                        column_config=col_config_lancamentos
+                    )
                     
-                    for id_del in ids_excluidos:
-                        try:
-                            deletar_transacao(id_del)
-                        except Exception:
-                            pass 
+                    if st.form_submit_button("💾 Salvar Alterações", type="primary"):
+                        ids_originais = set(df_t['id'].dropna())
+                        ids_editados = set(ed['id'].dropna())
+                        ids_excluidos = ids_originais - ids_editados
+                        
+                        for id_del in ids_excluidos:
+                            try:
+                                deletar_transacao(id_del)
+                            except Exception:
+                                pass 
 
-                    df_salvar = ed.dropna(subset=['nome', 'valor'])
-                    atualizar_transacoes(USER_ID, df_salvar)
-                    
-                    st.success("Alterações salvas!")
-                    st.rerun()
+                        df_salvar = ed.dropna(subset=['nome', 'valor'])
+                        atualizar_transacoes(USER_ID, df_salvar)
+                        
+                        st.success("Alterações salvas!")
+                        st.rerun()
 
     elif menu == "Investimentos":
         st.title("📈 Investimentos")
@@ -366,54 +369,57 @@ def main_app():
                 "data_limite": st.column_config.DateColumn("Data Limite", format="DD/MM/YYYY")
             }
 
-            st.info("💡 Dica: Para excluir, selecione a linha na lateral e aperte Delete no teclado.")
+            # Tabela de Recorrências agora dentro de um formulário
+            with st.form("form_editar_recorrencias"):
+                st.info("💡 Dica: Para excluir, selecione a linha na lateral e aperte Delete no teclado.")
 
-            ed_r = st.data_editor(
-                df_r, 
-                num_rows="dynamic",
-                use_container_width=True, 
-                hide_index=True, 
-                column_config=col_config_recorrencias
-            )
-            
-            if st.button("💾 Salvar Recorrências", type="primary"):
-                # Lógica de exclusão nativa
-                ids_originais_r = set(df_r['id'].dropna())
-                ids_editados_r = set(ed_r['id'].dropna())
-                ids_excluidos_r = ids_originais_r - ids_editados_r
+                ed_r = st.data_editor(
+                    df_r, 
+                    num_rows="dynamic",
+                    use_container_width=True, 
+                    hide_index=True, 
+                    column_config=col_config_recorrencias
+                )
                 
-                for id_del in ids_excluidos_r:
-                    try:
-                        deletar_recorrencia(id_del)
-                    except Exception:
-                        pass
-                
-                df_salvar_r = ed_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
-                atualizar_recorrencias(USER_ID, df_salvar_r)
-                
-                st.success("Recorrências atualizadas!")
-                st.rerun()
+                if st.form_submit_button("💾 Salvar Recorrências", type="primary"):
+                    ids_originais_r = set(df_r['id'].dropna())
+                    ids_editados_r = set(ed_r['id'].dropna())
+                    ids_excluidos_r = ids_originais_r - ids_editados_r
+                    
+                    for id_del in ids_excluidos_r:
+                        try:
+                            deletar_recorrencia(id_del)
+                        except Exception:
+                            pass
+                    
+                    df_salvar_r = ed_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
+                    atualizar_recorrencias(USER_ID, df_salvar_r)
+                    
+                    st.success("Recorrências atualizadas!")
+                    st.rerun()
 
         with t2:
-            st.subheader("Gerenciar Categorias")
-            st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
-            
-            df_categorias = pd.DataFrame(st.session_state['categorias'], columns=['Categoria'])
-            
-            ed_categorias = st.data_editor(
-                df_categorias,
-                num_rows="dynamic",
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            if st.button("💾 Salvar Categorias", type="primary"):
-                novas_categorias = ed_categorias['Categoria'].dropna().str.strip()
-                novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
+            # Tabela de Categorias agora dentro de um formulário
+            with st.form("form_editar_categorias"):
+                st.subheader("Gerenciar Categorias")
+                st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
                 
-                st.session_state['categorias'] = novas_categorias
-                st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo nas outras abas.")
-                st.rerun()
+                df_categorias = pd.DataFrame(st.session_state['categorias'], columns=['Categoria'])
+                
+                ed_categorias = st.data_editor(
+                    df_categorias,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                if st.form_submit_button("💾 Salvar Categorias", type="primary"):
+                    novas_categorias = ed_categorias['Categoria'].dropna().str.strip()
+                    novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
+                    
+                    st.session_state['categorias'] = novas_categorias
+                    st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo nas outras abas.")
+                    st.rerun()
 
 if not st.session_state['logged_in']: tela_login()
 else: main_app()
