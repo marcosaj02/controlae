@@ -60,7 +60,7 @@ def carregar_tema():
 
     css = f"""
     <style>
-    /* Remover atrasos e animações de transição para deixar mais rápido (Melhoria 4) */
+    /* Remover atrasos e animações de transição para deixar mais rápido */
     .stApp, .main, [data-testid="stAppViewBlockContainer"], .block-container {{
         animation: none !important;
         transition: none !important;
@@ -273,37 +273,48 @@ def main_app():
                 df_t['data'] = pd.to_datetime(df_t['data']).dt.date
                 df_t['Excluir'] = False # Cria a coluna de controle
                 
-                # Configuração Melhorada das Colunas (Ocultando IDs e Adicionando Dropdowns)
                 col_config_lancamentos = {
-                    "id": None, # Oculta o ID
-                    "user_id": None, # Oculta o ID de usuário
-                    "origem_recorrencia_id": None, # Oculta a origem
-                    "data": st.column_config.DateColumn("Data"),
-                    "nome": st.column_config.TextColumn("Descrição"),
-                    "valor": st.column_config.NumberColumn("Valor"),
+                    "id": None, 
+                    "user_id": None, 
+                    "origem_recorrencia_id": None, 
+                    "data": st.column_config.DateColumn("Data", required=True),
+                    "nome": st.column_config.TextColumn("Descrição", required=True),
+                    "valor": st.column_config.NumberColumn("Valor", required=True),
                     "categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros"]),
                     "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
                     "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"]),
-                    "Excluir": st.column_config.CheckboxColumn("Excluir ❌")
+                    "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
                 }
 
                 ed = st.data_editor(
                     df_t[df_t['tipo'] != 'Investimento'], 
                     use_container_width=True, 
                     hide_index=True, 
+                    num_rows="dynamic", # Permite adicionar/remover nativamente (tecla Delete)
                     column_config=col_config_lancamentos
                 )
                 
                 if st.button("💾 Salvar Alterações / Remover Excluídos", type="primary"):
-                    # Filtra apenas as linhas onde Excluir é False e remove a coluna de controle para salvar
-                    df_salvar = ed[ed['Excluir'] == False].drop(columns=['Excluir'])
+                    # Tenta forçar a exclusão no banco se a função deletar_transacao existir
+                    linhas_para_excluir = ed[ed['Excluir'] == True]
+                    for _, row in linhas_para_excluir.iterrows():
+                        if pd.notna(row.get('id')):
+                            try:
+                                deletar_transacao(row['id'])
+                            except Exception:
+                                pass # Se não existir, a limpeza abaixo resolve
+
+                    # Pega apenas o que NÃO foi marcado para excluir
+                    df_salvar = ed[ed['Excluir'] == False].copy()
                     
-                    # Atualiza enviando os dados limpos (Assumindo que o atualizar_transacoes re-sincroniza ou sobrescreve)
-                    # Caso seu banco use deleções via ID explicita (ex: deletar_transacao(id)), 
-                    # os itens excluídos podem ser obtidos via: ids_excluidos = ed[ed['Excluir'] == True]['id']
+                    # MAGIA AQUI: Remove linhas completamente vazias que não têm descrição ou valor
+                    df_salvar = df_salvar.dropna(subset=['nome', 'valor'])
+                    
+                    # Remove a coluna de controle antes de salvar
+                    df_salvar = df_salvar.drop(columns=['Excluir'])
                     atualizar_transacoes(USER_ID, df_salvar)
                     
-                    st.success("Alterações salvas e/ou registros excluídos!")
+                    st.success("Alterações salvas e registros limpos!")
                     st.rerun()
 
     elif menu == "Investimentos":
@@ -332,30 +343,46 @@ def main_app():
             df_r['Excluir'] = False
 
         col_config_recorrencias = {
-            "id": None, # Oculta
-            "user_id": None, # Oculta
-            "nome": st.column_config.TextColumn("Descrição"),
-            "valor": st.column_config.NumberColumn("Valor"),
-            "dia_vencimento": st.column_config.NumberColumn("Dia de Vencimento", min_value=1, max_value=31),
+            "id": None, 
+            "user_id": None, 
+            "nome": st.column_config.TextColumn("Descrição", required=True),
+            "valor": st.column_config.NumberColumn("Valor", required=True),
+            "dia_vencimento": st.column_config.NumberColumn("Dia de Vencimento", min_value=1, max_value=31, required=True),
             "categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros"]),
             "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
             "ativo": st.column_config.CheckboxColumn("Ativo"),
             "data_limite": st.column_config.DateColumn("Data Limite"),
-            "Excluir": st.column_config.CheckboxColumn("Excluir ❌")
+            "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
         }
 
         ed_r = st.data_editor(
             df_r, 
-            num_rows="dynamic", 
+            num_rows="dynamic", # Permite adicionar/remover nativamente (tecla Delete)
             use_container_width=True, 
             hide_index=True, 
             column_config=col_config_recorrencias
         )
         
         if st.button("Salvar Recorrências / Remover Excluídos", type="primary"):
-            df_salvar_r = ed_r[ed_r['Excluir'] == False].drop(columns=['Excluir'])
+            # Tenta forçar exclusão
+            linhas_para_excluir_r = ed_r[ed_r['Excluir'] == True]
+            for _, row in linhas_para_excluir_r.iterrows():
+                if pd.notna(row.get('id')):
+                    try:
+                        deletar_recorrencia(row['id'])
+                    except Exception:
+                        pass
+            
+            # Pega o que NÃO foi marcado para exclusão
+            df_salvar_r = ed_r[ed_r['Excluir'] == False].copy()
+            
+            # Limpa linhas vazias criadas acidentalmente (None)
+            df_salvar_r = df_salvar_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
+            
+            df_salvar_r = df_salvar_r.drop(columns=['Excluir'])
             atualizar_recorrencias(USER_ID, df_salvar_r)
-            st.success("Recorrências atualizadas!")
+            
+            st.success("Recorrências atualizadas e registros limpos!")
             st.rerun()
 
 if not st.session_state['logged_in']: tela_login()
