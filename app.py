@@ -276,19 +276,23 @@ def main_app():
             df_t = ler_transacoes(USER_ID)
             if not df_t.empty:
                 df_t['data'] = pd.to_datetime(df_t['data']).dt.date
-                # Ordenação padrão do mais recente para o mais antigo
-                df_t = df_t.sort_values(by='data', ascending=False)
                 
-                # Separar investimentos para não perder na hora de salvar
                 df_t_investimentos = df_t[df_t['tipo'] == 'Investimento']
                 df_t_lancamentos = df_t[df_t['tipo'] != 'Investimento']
 
-                # --- FILTROS ---
-                with st.expander("🔍 Filtros de Busca", expanded=False):
+                # --- FILTROS E ORDENAÇÃO EXPLÍCITA ---
+                with st.expander("🔍 Filtros e Ordenação", expanded=False):
+                    st.write("**Filtros**")
                     c_f1, c_f2, c_f3 = st.columns(3)
                     f_texto = c_f1.text_input("Buscar por Descrição")
                     f_cat = c_f2.multiselect("Filtrar Categoria", st.session_state['categorias'])
                     f_status = c_f3.multiselect("Filtrar Status", ["Pago", "Pendente"])
+                    
+                    st.divider()
+                    st.write("**Ordenar por**")
+                    c_o1, c_o2 = st.columns(2)
+                    coluna_ordenacao = c_o1.selectbox("Coluna", ["Data", "Descrição", "Valor", "Categoria"])
+                    direcao_ordenacao = c_o2.radio("Ordem", ["Crescente", "Decrescente"], horizontal=True)
 
                 # Aplicação dos Filtros
                 df_filtrado = df_t_lancamentos.copy()
@@ -298,6 +302,11 @@ def main_app():
                     df_filtrado = df_filtrado[df_filtrado['categoria'].isin(f_cat)]
                 if f_status:
                     df_filtrado = df_filtrado[df_filtrado['status'].isin(f_status)]
+
+                # Aplicação da Ordenação
+                mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
+                coluna_real = mapa_colunas[coluna_ordenacao]
+                df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente"))
 
                 col_config_lancamentos = {
                     "id": None, 
@@ -312,7 +321,7 @@ def main_app():
                 }
 
                 with st.form("form_editar_lancamentos"):
-                    st.info("💡 **Dicas de Uso:**\n- **Ordenar:** Clique direto no título da coluna (ex: *Data* ou *Valor*) para colocar em ordem crescente ou decrescente.\n- **Excluir:** Selecione a linha clicando na margem esquerda e aperte a tecla `Delete`.")
+                    st.info("💡 **Dica:** Para excluir uma linha, selecione-a clicando na margem esquerda e aperte a tecla `Delete`.")
 
                     ed = st.data_editor(
                         df_filtrado, 
@@ -331,13 +340,10 @@ def main_app():
                             try: deletar_transacao(id_del)
                             except Exception: pass 
 
-                        # Remonta a tabela completa com as edições e os dados ocultos pelo filtro
                         ids_no_filtro = df_filtrado['id'].dropna().tolist()
                         df_restante = df_t_lancamentos[~df_t_lancamentos['id'].isin(ids_no_filtro)]
                         
                         df_salvar_parcial = ed.dropna(subset=['nome', 'valor'])
-                        
-                        # Concatena o que não estava no filtro + o que foi editado no filtro + investimentos
                         df_salvar_final = pd.concat([df_restante, df_salvar_parcial, df_t_investimentos], ignore_index=True)
 
                         atualizar_transacoes(USER_ID, df_salvar_final)
@@ -361,12 +367,20 @@ def main_app():
             df_i = df_i_full[df_i_full['tipo'] == 'Investimento']
             if not df_i.empty:
                 df_i['data'] = pd.to_datetime(df_i['data']).dt.date
-                df_i = df_i.sort_values(by='data', ascending=False)
                 
-                with st.expander("🔍 Filtros", expanded=False):
-                    f_i_texto = st.text_input("Buscar Investimento")
+                with st.expander("🔍 Filtros e Ordenação", expanded=False):
+                    c_i1, c_i2 = st.columns([2, 1])
+                    f_i_texto = c_i1.text_input("Buscar Investimento")
+                    
+                    c_io1, c_io2 = st.columns(2)
+                    coluna_ord_inv = c_io1.selectbox("Ordenar por", ["Data", "Descrição", "Valor", "Tipo"])
+                    direcao_ord_inv = c_io2.radio("Ordem", ["Crescente", "Decrescente"], horizontal=True, key="ord_inv")
+
                 if f_i_texto:
                     df_i = df_i[df_i['nome'].str.contains(f_i_texto, case=False, na=False)]
+
+                mapa_colunas_inv = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Tipo": "categoria"}
+                df_i = df_i.sort_values(by=mapa_colunas_inv[coluna_ord_inv], ascending=(direcao_ord_inv == "Crescente"))
 
                 st.dataframe(
                     df_i[['data', 'nome', 'valor', 'categoria']], 
@@ -388,21 +402,30 @@ def main_app():
         with t1:
             df_r_full = ler_recorrencias(USER_ID)
             
-            if not df_r_full.empty:
-                df_r_full = df_r_full.sort_values(by='nome', ascending=True)
-
-            with st.expander("🔍 Filtros de Busca", expanded=False):
+            with st.expander("🔍 Filtros e Ordenação", expanded=False):
+                st.write("**Filtros**")
                 c_rf1, c_rf2 = st.columns(2)
                 f_r_texto = c_rf1.text_input("Buscar por Descrição")
                 f_r_cat = c_rf2.multiselect("Filtrar Categoria", st.session_state['categorias'])
 
+                st.divider()
+                st.write("**Ordenar por**")
+                c_ro1, c_ro2 = st.columns(2)
+                coluna_ord_rec = c_ro1.selectbox("Coluna", ["Descrição", "Valor", "Dia de Vencimento", "Categoria"])
+                direcao_ord_rec = c_ro2.radio("Ordem", ["Crescente", "Decrescente"], horizontal=True, key="ord_rec")
+
             df_r_filtrado = df_r_full.copy() if not df_r_full.empty else df_r_full
             
             if not df_r_filtrado.empty:
+                # Aplicação Filtros
                 if f_r_texto:
                     df_r_filtrado = df_r_filtrado[df_r_filtrado['nome'].str.contains(f_r_texto, case=False, na=False)]
                 if f_r_cat:
                     df_r_filtrado = df_r_filtrado[df_r_filtrado['categoria'].isin(f_r_cat)]
+                
+                # Aplicação Ordenação
+                mapa_colunas_rec = {"Descrição": "nome", "Valor": "valor", "Dia de Vencimento": "dia_vencimento", "Categoria": "categoria"}
+                df_r_filtrado = df_r_filtrado.sort_values(by=mapa_colunas_rec[coluna_ord_rec], ascending=(direcao_ord_rec == "Crescente"))
 
             col_config_recorrencias = {
                 "id": None, 
@@ -417,7 +440,7 @@ def main_app():
             }
 
             with st.form("form_editar_recorrencias"):
-                st.info("💡 **Dicas:** Clique direto no título da coluna (ex: *Valor* ou *Dia de Vencimento*) para ordenar. Para excluir uma linha inteira, selecione-a na margem e aperte `Delete`.")
+                st.info("💡 **Dica:** Para excluir uma linha inteira, selecione-a na margem esquerda e aperte `Delete`.")
 
                 ed_r = st.data_editor(
                     df_r_filtrado, 
@@ -436,39 +459,4 @@ def main_app():
                         try: deletar_recorrencia(id_del)
                         except Exception: pass
                     
-                    # Reconstruir tabela com dados ocultos
-                    ids_no_filtro_r = df_r_filtrado['id'].dropna().tolist()
-                    df_restante_r = df_r_full[~df_r_full['id'].isin(ids_no_filtro_r)]
-                    
-                    df_salvar_parcial_r = ed_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
-                    df_salvar_final_r = pd.concat([df_restante_r, df_salvar_parcial_r], ignore_index=True)
-
-                    atualizar_recorrencias(USER_ID, df_salvar_final_r)
-                    
-                    st.success("Recorrências atualizadas!")
-                    st.rerun()
-
-        with t2:
-            with st.form("form_editar_categorias"):
-                st.subheader("Gerenciar Categorias")
-                st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
-                
-                df_categorias = pd.DataFrame(st.session_state['categorias'], columns=['Categoria'])
-                
-                ed_categorias = st.data_editor(
-                    df_categorias,
-                    num_rows="dynamic",
-                    use_container_width=True,
-                    hide_index=True
-                )
-                
-                if st.form_submit_button("💾 Salvar Categorias", type="primary"):
-                    novas_categorias = ed_categorias['Categoria'].dropna().str.strip()
-                    novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
-                    
-                    st.session_state['categorias'] = novas_categorias
-                    st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo nas outras abas.")
-                    st.rerun()
-
-if not st.session_state['logged_in']: tela_login()
-else: main_app()
+                    ids_no_filtro_r = df_r_filtrado['id'].dropna().tolist
