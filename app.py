@@ -459,4 +459,38 @@ def main_app():
                         try: deletar_recorrencia(id_del)
                         except Exception: pass
                     
-                    ids_no_filtro_r = df_r_filtrado['id'].dropna().tolist
+                    ids_no_filtro_r = df_r_filtrado['id'].dropna().tolist()
+                    df_restante_r = df_r_full[~df_r_full['id'].isin(ids_no_filtro_r)]
+                    
+                    df_salvar_parcial_r = ed_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
+                    df_salvar_final_r = pd.concat([df_restante_r, df_salvar_parcial_r], ignore_index=True)
+
+                    atualizar_recorrencias(USER_ID, df_salvar_final_r)
+                    
+                    st.success("Recorrências atualizadas!")
+                    st.rerun()
+
+        with t2:
+            with st.form("form_editar_categorias"):
+                st.subheader("Gerenciar Categorias")
+                st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
+                
+                df_categorias = pd.DataFrame(st.session_state['categorias'], columns=['Categoria'])
+                
+                ed_categorias = st.data_editor(
+                    df_categorias,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                if st.form_submit_button("💾 Salvar Categorias", type="primary"):
+                    novas_categorias = ed_categorias['Categoria'].dropna().str.strip()
+                    novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
+                    
+                    st.session_state['categorias'] = novas_categorias
+                    st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo nas outras abas.")
+                    st.rerun()
+
+if not st.session_state['logged_in']: tela_login()
+else: main_app()
