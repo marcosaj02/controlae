@@ -34,7 +34,7 @@ def enviar_email(destinatario, assunto, corpo):
 def formatar_moeda(valor):
     return f"{valor:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-# --- 3. CONFIGURAÇÃO DA PÁGINA ---
+# --- 3. CONFIGURAÇÃO DA PÁGINA E BANCO ---
 st.set_page_config(page_title="Gestor Financeiro Pro", layout="wide", page_icon="💳")
 inicializar_db()
 
@@ -112,12 +112,16 @@ def carregar_tema():
 
 carregar_tema()
 
-# --- 5. INICIALIZAÇÃO DA SESSÃO ---
+# --- 5. INICIALIZAÇÃO DA SESSÃO E VARIÁVEIS GLOBAIS ---
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 'user_id': None, 'user_nome': None,
         'verificacao_pendente': False, 'codigo_gerado': None, 'dados_novo_user': None
     })
+
+# Lista de categorias dinâmica na sessão
+if 'categorias' not in st.session_state:
+    st.session_state['categorias'] = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros"]
 
 # --- 6. TELA DE LOGIN & CADASTRO ---
 def tela_login():
@@ -260,9 +264,12 @@ def main_app():
                 n_l = c2.text_input("Descrição")
                 c3, c4, c5, c6 = st.columns(4)
                 v_l = c3.number_input("Valor", min_value=0.0)
-                ct_l = c4.selectbox("Categoria", ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros"])
+                
+                # Categoria agora vem da lista dinâmica
+                ct_l = c4.selectbox("Categoria", st.session_state['categorias'])
                 tp_l = c5.selectbox("Tipo", ["Despesa", "Receita"])
                 st_l = c6.selectbox("Status", ["Pago", "Pendente"])
+                
                 if st.form_submit_button("Salvar", type="primary"):
                     adicionar_transacao(USER_ID, d_l, n_l, v_l, ct_l, tp_l, st_l)
                     st.success("Salvo!")
@@ -271,7 +278,7 @@ def main_app():
             df_t = ler_transacoes(USER_ID)
             if not df_t.empty:
                 df_t['data'] = pd.to_datetime(df_t['data']).dt.date
-                df_t['Excluir'] = False # Cria a coluna de controle
+                df_t['Excluir'] = False 
                 
                 col_config_lancamentos = {
                     "id": None, 
@@ -280,37 +287,34 @@ def main_app():
                     "data": st.column_config.DateColumn("Data", required=True),
                     "nome": st.column_config.TextColumn("Descrição", required=True),
                     "valor": st.column_config.NumberColumn("Valor", required=True),
-                    "categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros"]),
+                    # Aplicação da lista dinâmica de categorias
+                    "categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state['categorias']),
                     "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
                     "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"]),
                     "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
                 }
 
+                st.info("💡 Dica: Dê um duplo clique nas colunas Categoria e Tipo para abrir a lista de opções.")
+
                 ed = st.data_editor(
                     df_t[df_t['tipo'] != 'Investimento'], 
                     use_container_width=True, 
                     hide_index=True, 
-                    num_rows="dynamic", # Permite adicionar/remover nativamente (tecla Delete)
+                    num_rows="dynamic", 
                     column_config=col_config_lancamentos
                 )
                 
                 if st.button("💾 Salvar Alterações / Remover Excluídos", type="primary"):
-                    # Tenta forçar a exclusão no banco se a função deletar_transacao existir
                     linhas_para_excluir = ed[ed['Excluir'] == True]
                     for _, row in linhas_para_excluir.iterrows():
                         if pd.notna(row.get('id')):
                             try:
                                 deletar_transacao(row['id'])
                             except Exception:
-                                pass # Se não existir, a limpeza abaixo resolve
+                                pass 
 
-                    # Pega apenas o que NÃO foi marcado para excluir
                     df_salvar = ed[ed['Excluir'] == False].copy()
-                    
-                    # MAGIA AQUI: Remove linhas completamente vazias que não têm descrição ou valor
                     df_salvar = df_salvar.dropna(subset=['nome', 'valor'])
-                    
-                    # Remove a coluna de controle antes de salvar
                     df_salvar = df_salvar.drop(columns=['Excluir'])
                     atualizar_transacoes(USER_ID, df_salvar)
                     
@@ -336,54 +340,84 @@ def main_app():
                 st.dataframe(df_i[['data', 'nome', 'valor', 'categoria']], use_container_width=True, hide_index=True)
 
     elif menu == "Configurar Recorrências":
-        st.title("⚙️ Contas Fixas")
-        df_r = ler_recorrencias(USER_ID)
+        st.title("⚙️ Contas Fixas e Parâmetros")
         
-        if 'Excluir' not in df_r.columns:
-            df_r['Excluir'] = False
-
-        col_config_recorrencias = {
-            "id": None, 
-            "user_id": None, 
-            "nome": st.column_config.TextColumn("Descrição", required=True),
-            "valor": st.column_config.NumberColumn("Valor", required=True),
-            "dia_vencimento": st.column_config.NumberColumn("Dia de Vencimento", min_value=1, max_value=31, required=True),
-            "categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros"]),
-            "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
-            "ativo": st.column_config.CheckboxColumn("Ativo"),
-            "data_limite": st.column_config.DateColumn("Data Limite"),
-            "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
-        }
-
-        ed_r = st.data_editor(
-            df_r, 
-            num_rows="dynamic", # Permite adicionar/remover nativamente (tecla Delete)
-            use_container_width=True, 
-            hide_index=True, 
-            column_config=col_config_recorrencias
-        )
+        # Criação da nova aba de Categorias
+        t1, t2 = st.tabs(["⚙️ Contas Fixas", "🏷️ Categorias"])
         
-        if st.button("Salvar Recorrências / Remover Excluídos", type="primary"):
-            # Tenta forçar exclusão
-            linhas_para_excluir_r = ed_r[ed_r['Excluir'] == True]
-            for _, row in linhas_para_excluir_r.iterrows():
-                if pd.notna(row.get('id')):
-                    try:
-                        deletar_recorrencia(row['id'])
-                    except Exception:
-                        pass
+        with t1:
+            df_r = ler_recorrencias(USER_ID)
             
-            # Pega o que NÃO foi marcado para exclusão
-            df_salvar_r = ed_r[ed_r['Excluir'] == False].copy()
+            if 'Excluir' not in df_r.columns:
+                df_r['Excluir'] = False
+
+            col_config_recorrencias = {
+                "id": None, 
+                "user_id": None, 
+                "nome": st.column_config.TextColumn("Descrição", required=True),
+                "valor": st.column_config.NumberColumn("Valor", required=True),
+                "dia_vencimento": st.column_config.NumberColumn("Dia de Vencimento", min_value=1, max_value=31, required=True),
+                # Aplicação da lista dinâmica de categorias
+                "categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state['categorias']),
+                "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
+                "ativo": st.column_config.CheckboxColumn("Ativo"),
+                "data_limite": st.column_config.DateColumn("Data Limite"),
+                "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
+            }
+
+            st.info("💡 Dica: Dê um duplo clique nas colunas Categoria e Tipo para abrir a lista de opções.")
+
+            ed_r = st.data_editor(
+                df_r, 
+                num_rows="dynamic",
+                use_container_width=True, 
+                hide_index=True, 
+                column_config=col_config_recorrencias
+            )
             
-            # Limpa linhas vazias criadas acidentalmente (None)
-            df_salvar_r = df_salvar_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
+            if st.button("Salvar Recorrências / Remover Excluídos", type="primary"):
+                linhas_para_excluir_r = ed_r[ed_r['Excluir'] == True]
+                for _, row in linhas_para_excluir_r.iterrows():
+                    if pd.notna(row.get('id')):
+                        try:
+                            deletar_recorrencia(row['id'])
+                        except Exception:
+                            pass
+                
+                df_salvar_r = ed_r[ed_r['Excluir'] == False].copy()
+                df_salvar_r = df_salvar_r.dropna(subset=['nome', 'valor', 'dia_vencimento'])
+                df_salvar_r = df_salvar_r.drop(columns=['Excluir'])
+                atualizar_recorrencias(USER_ID, df_salvar_r)
+                
+                st.success("Recorrências atualizadas e registros limpos!")
+                st.rerun()
+
+        # --- NOVA ABA DE CATEGORIAS ---
+        with t2:
+            st.subheader("Gerenciar Categorias")
+            st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
             
-            df_salvar_r = df_salvar_r.drop(columns=['Excluir'])
-            atualizar_recorrencias(USER_ID, df_salvar_r)
+            # Converte a lista da sessão para um DataFrame
+            df_categorias = pd.DataFrame(st.session_state['categorias'], columns=['Categoria'])
             
-            st.success("Recorrências atualizadas e registros limpos!")
-            st.rerun()
+            # Grid editável para as categorias
+            ed_categorias = st.data_editor(
+                df_categorias,
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            if st.button("💾 Salvar Categorias", type="primary"):
+                # Pega as categorias editadas, remove vazios e espaços extras
+                novas_categorias = ed_categorias['Categoria'].dropna().str.strip()
+                # Remove strings vazias e duplicadas, transforma de volta em lista
+                novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
+                
+                # Salva na sessão
+                st.session_state['categorias'] = novas_categorias
+                st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo nas outras abas.")
+                st.rerun()
 
 if not st.session_state['logged_in']: tela_login()
 else: main_app()
