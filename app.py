@@ -219,11 +219,10 @@ def main_app():
 
             st.divider()
             
-            # --- NOVA LÓGICA DE GRÁFICOS (Filtro Realizado vs Projetado) ---
+            # --- VISÃO DOS GRÁFICOS ---
             visao_grafico = st.radio("🔍 Visão dos Gráficos abaixo:", ["Realizado (Apenas Pagos)", "Projetado (Pagos + Pendentes)"], horizontal=True)
             
-            # Aplica o filtro aos DataFrames que vão alimentar os gráficos baseados na escolha
-            df_plot = df[df['status'] == 'Pago'].copy() if "Realizado" in visao_grafico else df.copy()
+            # Filtra estritamente o mês atual baseado na escolha
             df_mes_plot = df_mes[df_mes['status'] == 'Pago'].copy() if "Realizado" in visao_grafico else df_mes.copy()
 
             col_g1, col_g2 = st.columns(2)
@@ -235,18 +234,24 @@ def main_app():
                     st.info("Nenhum gasto encontrado para a visão selecionada.")
                     
             with col_g2:
-                if not df_plot.empty:
-                    df_plot['mes_ano'] = df_plot['data'].dt.strftime('%m/%Y')
-                    df_ev = df_plot[df_plot['tipo'].isin(['Receita', 'Despesa'])].groupby(['mes_ano', 'tipo'])['valor'].sum().reset_index()
+                # Novo gráfico: Comparativo estrito do Mês
+                if not df_mes_plot.empty:
+                    df_mes_ev = df_mes_plot[df_mes_plot['tipo'].isin(['Receita', 'Despesa'])].groupby('tipo')['valor'].sum().reset_index()
                     
-                    fig = px.bar(df_ev, x='mes_ano', y='valor', color='tipo', barmode='group', title="Evolução Mensal", color_discrete_map={'Receita': '#10B981', 'Despesa': '#EF4444'})
-                    # update_xaxes com type='category' previne o erro de 00:00:00
-                    fig.update_xaxes(type='category', title="") 
+                    fig = px.bar(
+                        df_mes_ev, 
+                        x='tipo', 
+                        y='valor', 
+                        color='tipo', 
+                        title="Comparativo do Mês Corrente", 
+                        color_discrete_map={'Receita': '#10B981', 'Despesa': '#EF4444'}
+                    )
+                    fig.update_xaxes(title="") 
                     fig.update_yaxes(title="")
-                    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
+                    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA", showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info("Nenhum lançamento encontrado para a visão selecionada.")
+                    st.info("Nenhum lançamento encontrado para a visão selecionada no mês atual.")
             
             st.divider()
             col_e, col_d = st.columns(2)
