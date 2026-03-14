@@ -60,12 +60,6 @@ def carregar_tema():
 
     css = f"""
     <style>
-    /* Remover atrasos e animações de transição para deixar mais rápido */
-    .stApp, .main, [data-testid="stAppViewBlockContainer"], .block-container {{
-        animation: none !important;
-        transition: none !important;
-    }}
-
     .stApp {{ background-color: {cor_fundo}; color: {cor_texto}; }}
     [data-testid="stSidebar"] {{ background-color: {cor_input}; }}
     p, h1, h2, h3, label {{ color: {cor_texto} !important; }}
@@ -119,7 +113,6 @@ if 'logged_in' not in st.session_state:
         'verificacao_pendente': False, 'codigo_gerado': None, 'dados_novo_user': None
     })
 
-# Lista de categorias dinâmica na sessão
 if 'categorias' not in st.session_state:
     st.session_state['categorias'] = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros", "Parcelamentos", "Esportes"]
 
@@ -215,6 +208,7 @@ def main_app():
             mes_atual = date.today().strftime("%Y-%m")
             df_mes = df[df['data'].dt.strftime('%Y-%m') == mes_atual]
             
+            # Métricas Gerais do Topo (Apenas Pagos - Realizado)
             df_pago = df[df['status'] == 'Pago']
             saldo = df_pago[df_pago['tipo'] == 'Receita']['valor'].sum() - df_pago[df_pago['tipo'] == 'Despesa']['valor'].sum()
             
@@ -223,14 +217,36 @@ def main_app():
             c2.metric("Receitas (Mês)", f"R$ {formatar_moeda(df_mes[(df_mes['tipo'] == 'Receita') & (df_mes['status'] == 'Pago')]['valor'].sum())}")
             c3.metric("Despesas (Mês)", f"R$ {formatar_moeda(df_mes[(df_mes['tipo'] == 'Despesa') & (df_mes['status'] == 'Pago')]['valor'].sum())}", delta_color="inverse")
 
+            st.divider()
+            
+            # --- NOVA LÓGICA DE GRÁFICOS (Filtro Realizado vs Projetado) ---
+            visao_grafico = st.radio("🔍 Visão dos Gráficos abaixo:", ["Realizado (Apenas Pagos)", "Projetado (Pagos + Pendentes)"], horizontal=True)
+            
+            # Aplica o filtro aos DataFrames que vão alimentar os gráficos baseados na escolha
+            df_plot = df[df['status'] == 'Pago'].copy() if "Realizado" in visao_grafico else df.copy()
+            df_mes_plot = df_mes[df_mes['status'] == 'Pago'].copy() if "Realizado" in visao_grafico else df_mes.copy()
+
             col_g1, col_g2 = st.columns(2)
             with col_g1:
-                df_cat = df_mes[df_mes['tipo'] == 'Despesa'].groupby('categoria')['valor'].sum().reset_index()
-                st.plotly_chart(px.pie(df_cat, values='valor', names='categoria', hole=.5, title="Gastos por Categoria").update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA"), use_container_width=True)
+                df_cat = df_mes_plot[df_mes_plot['tipo'] == 'Despesa'].groupby('categoria')['valor'].sum().reset_index()
+                if not df_cat.empty:
+                    st.plotly_chart(px.pie(df_cat, values='valor', names='categoria', hole=.5, title="Gastos por Categoria").update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA"), use_container_width=True)
+                else:
+                    st.info("Nenhum gasto encontrado para a visão selecionada.")
+                    
             with col_g2:
-                df['mes_ano'] = df['data'].dt.to_period('M').astype(str)
-                df_ev = df[df['tipo'].isin(['Receita', 'Despesa'])].groupby(['mes_ano', 'tipo'])['valor'].sum().reset_index()
-                st.plotly_chart(px.bar(df_ev, x='mes_ano', y='valor', color='tipo', barmode='group', title="Evolução Mensal", color_discrete_map={'Receita': '#10B981', 'Despesa': '#EF4444'}).update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA"), use_container_width=True)
+                if not df_plot.empty:
+                    df_plot['mes_ano'] = df_plot['data'].dt.strftime('%m/%Y')
+                    df_ev = df_plot[df_plot['tipo'].isin(['Receita', 'Despesa'])].groupby(['mes_ano', 'tipo'])['valor'].sum().reset_index()
+                    
+                    fig = px.bar(df_ev, x='mes_ano', y='valor', color='tipo', barmode='group', title="Evolução Mensal", color_discrete_map={'Receita': '#10B981', 'Despesa': '#EF4444'})
+                    # update_xaxes com type='category' previne o erro de 00:00:00
+                    fig.update_xaxes(type='category', title="") 
+                    fig.update_yaxes(title="")
+                    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Nenhum lançamento encontrado para a visão selecionada.")
             
             st.divider()
             col_e, col_d = st.columns(2)
@@ -280,7 +296,6 @@ def main_app():
                 df_t_investimentos = df_t[df_t['tipo'] == 'Investimento']
                 df_t_lancamentos = df_t[df_t['tipo'] != 'Investimento']
 
-                # --- FILTROS E ORDENAÇÃO EXPLÍCITA ---
                 with st.expander("🔍 Filtros e Ordenação", expanded=False):
                     st.write("**Filtros**")
                     c_f1, c_f2, c_f3 = st.columns(3)
@@ -294,7 +309,6 @@ def main_app():
                     coluna_ordenacao = c_o1.selectbox("Coluna", ["Data", "Descrição", "Valor", "Categoria"])
                     direcao_ordenacao = c_o2.radio("Ordem", ["Crescente", "Decrescente"], horizontal=True)
 
-                # Aplicação dos Filtros
                 df_filtrado = df_t_lancamentos.copy()
                 if f_texto:
                     df_filtrado = df_filtrado[df_filtrado['nome'].str.contains(f_texto, case=False, na=False)]
@@ -303,7 +317,6 @@ def main_app():
                 if f_status:
                     df_filtrado = df_filtrado[df_filtrado['status'].isin(f_status)]
 
-                # Aplicação da Ordenação
                 mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
                 coluna_real = mapa_colunas[coluna_ordenacao]
                 df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente"))
@@ -417,13 +430,11 @@ def main_app():
             df_r_filtrado = df_r_full.copy() if not df_r_full.empty else df_r_full
             
             if not df_r_filtrado.empty:
-                # Aplicação Filtros
                 if f_r_texto:
                     df_r_filtrado = df_r_filtrado[df_r_filtrado['nome'].str.contains(f_r_texto, case=False, na=False)]
                 if f_r_cat:
                     df_r_filtrado = df_r_filtrado[df_r_filtrado['categoria'].isin(f_r_cat)]
                 
-                # Aplicação Ordenação
                 mapa_colunas_rec = {"Descrição": "nome", "Valor": "valor", "Dia de Vencimento": "dia_vencimento", "Categoria": "categoria"}
                 df_r_filtrado = df_r_filtrado.sort_values(by=mapa_colunas_rec[coluna_ord_rec], ascending=(direcao_ord_rec == "Crescente"))
 
