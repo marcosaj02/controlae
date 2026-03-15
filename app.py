@@ -325,7 +325,7 @@ def main_app():
                 # Espaço reservado para as métricas aparecerem ANTES da tabela
                 metricas_container = st.empty()
 
-                st.info("💡 **Dica:** Desmarque a caixinha **Somar 🧮** das linhas que você não quer contabilizar na Autossoma. Para excluir uma linha, selecione-a na lateral e aperte `Delete`.")
+                st.info("💡 **Dica:** Desmarque a caixinha **Somar 🧮** das linhas que você não quer contabilizar. Para excluir uma linha, selecione-a na lateral e aperte `Delete`.")
 
                 # Retirado de dentro do 'st.form' para permitir atualização em tempo real
                 ed = st.data_editor(
@@ -337,15 +337,15 @@ def main_app():
                     key="editor_lancamentos"
                 )
                 
-                # Cálculos matemáticos da autossoma usando apenas o que estiver ticado na tela
+                # Cálculos matemáticos limpos baseados na regra: Tipo Exato + Checkbox Marcado
                 receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
                 despesas_sum = ed[(ed['tipo'] == 'Despesa') & (ed['Selecionar'] == True)]['valor'].sum()
 
-                # Renderiza os cards de soma no espaço vazio que separamos acima
+                # Renderiza os cards de soma com os nomes limpos "Receita" e "Despesa"
                 with metricas_container.container():
                     cm1, cm2 = st.columns(2)
-                    cm1.metric("📈 Autossoma: Receitas", f"R$ {formatar_moeda(receitas_sum)}")
-                    cm2.metric("📉 Autossoma: Despesas", f"R$ {formatar_moeda(despesas_sum)}")
+                    cm1.metric("Receita", f"R$ {formatar_moeda(receitas_sum)}")
+                    cm2.metric("Despesa", f"R$ {formatar_moeda(despesas_sum)}")
                 
                 if st.button("💾 Salvar Alterações", type="primary"):
                     ids_originais = set(df_filtrado['id'].dropna())
