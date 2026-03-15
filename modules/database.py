@@ -25,7 +25,7 @@ def inicializar_db():
                     senha TEXT,
                     nome TEXT)''')
 
-    # 2. Categorias
+    # 2. Categorias (Já possui user_id)
     c.execute('''CREATE TABLE IF NOT EXISTS categorias (
                     id SERIAL PRIMARY KEY,
                     nome TEXT,
@@ -207,7 +207,7 @@ def confirmar_transacao(transacao_id, data_real):
     conn.commit()
     conn.close()
 
-# --- NOVA FUNÇÃO: ATUALIZAR/EXCLUIR TRANSAÇÕES MANUAIS ---
+# --- ATUALIZAR/EXCLUIR TRANSAÇÕES MANUAIS ---
 def atualizar_transacoes(user_id, df_novo):
     conn = conectar()
     c = conn.cursor()
@@ -244,5 +244,36 @@ def atualizar_transacoes(user_id, df_novo):
                 WHERE id = %s AND user_id = %s
             """, (data_str, row['nome'], row['valor'], row['categoria'], row['tipo'], row['status'], row['id'], user_id))
                   
+    conn.commit()
+    conn.close()
+
+# --- NOVAS FUNÇÕES: GERENCIAMENTO DE CATEGORIAS POR USUÁRIO ---
+def ler_categorias_db(user_id):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT nome FROM categorias WHERE user_id = %s", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+    
+    if not rows:
+        # Se o usuário não tem categorias configuradas, retorna as opções padrão e já salva no banco
+        padroes = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros", "Parcelamentos", "Esportes"]
+        salvar_categorias_db(user_id, padroes)
+        return padroes
+        
+    return [row[0] for row in rows]
+
+def salvar_categorias_db(user_id, categorias_lista):
+    conn = conectar()
+    c = conn.cursor()
+    
+    # Apaga as categorias antigas deste usuário para não duplicar
+    c.execute("DELETE FROM categorias WHERE user_id = %s", (user_id,))
+    
+    # Insere a nova lista atualizada
+    for cat in categorias_lista:
+        if cat and cat.strip() != "":
+            c.execute("INSERT INTO categorias (nome, user_id) VALUES (%s, %s)", (cat.strip(), user_id))
+            
     conn.commit()
     conn.close()
