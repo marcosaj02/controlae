@@ -270,7 +270,6 @@ def main_app():
 
     elif menu == "Lançamentos":
         st.title("💸 Lançamentos")
-        # Invertendo a ordem das abas (Edição vem primeiro agora)
         t1, t2 = st.tabs(["✏️ Editar e Excluir", "➕ Novo"])
         
         with t1:
@@ -306,14 +305,14 @@ def main_app():
                 coluna_real = mapa_colunas[coluna_ordenacao]
                 df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente"))
 
-                # Nova coluna de controle para a autossoma dinâmica
-                df_filtrado.insert(0, 'Selecionar', True)
+                # Inicia desmarcada para que o filtro total seja a visualização padrão
+                df_filtrado.insert(0, 'Selecionar', False)
 
                 col_config_lancamentos = {
                     "id": None, 
                     "user_id": None, 
                     "origem_recorrencia_id": None, 
-                    "Selecionar": st.column_config.CheckboxColumn("Somar 🧮", default=True),
+                    "Selecionar": st.column_config.CheckboxColumn("🧮 Selecionar", default=False),
                     "data": st.column_config.DateColumn("Data", required=True, format="DD/MM/YYYY"),
                     "nome": st.column_config.TextColumn("Descrição", required=True),
                     "valor": st.column_config.NumberColumn("Valor", required=True, format="%.2f"),
@@ -322,12 +321,10 @@ def main_app():
                     "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
                 }
 
-                # Espaço reservado para as métricas aparecerem ANTES da tabela
                 metricas_container = st.empty()
 
-                st.info("💡 **Dica:** Desmarque a caixinha **Somar 🧮** das linhas que você não quer contabilizar. Para excluir uma linha, selecione-a na lateral e aperte `Delete`.")
+                st.info("💡 **Atenção à Matemática:** Se nenhuma caixa **🧮 Selecionar** estiver marcada, os valores acima refletem o total geral da tabela/filtro. Caso você marque qualquer caixa, a matemática calcula **apenas** o que foi selecionado.")
 
-                # Retirado de dentro do 'st.form' para permitir atualização em tempo real
                 ed = st.data_editor(
                     df_filtrado, 
                     use_container_width=True, 
@@ -337,11 +334,19 @@ def main_app():
                     key="editor_lancamentos"
                 )
                 
-                # Cálculos matemáticos limpos baseados na regra: Tipo Exato + Checkbox Marcado
-                receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
-                despesas_sum = ed[(ed['tipo'] == 'Despesa') & (ed['Selecionar'] == True)]['valor'].sum()
+                # --- LÓGICA DE AUTOSSOMA INTELIGENTE ---
+                has_selection = ed['Selecionar'].any() # Verifica se pelo menos uma caixa foi clicada
+                
+                if has_selection:
+                    # Soma apenas os selecionados
+                    receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
+                    despesas_sum = ed[(ed['tipo'] == 'Despesa') & (ed['Selecionar'] == True)]['valor'].sum()
+                else:
+                    # Soma tudo que está visível no grid (útil para combinar com o Filtro)
+                    receitas_sum = ed[ed['tipo'] == 'Receita']['valor'].sum()
+                    despesas_sum = ed[ed['tipo'] == 'Despesa']['valor'].sum()
 
-                # Renderiza os cards de soma com os nomes limpos "Receita" e "Despesa"
+                # Renderiza os cards estritamente como pedido
                 with metricas_container.container():
                     cm1, cm2 = st.columns(2)
                     cm1.metric("Receita", f"R$ {formatar_moeda(receitas_sum)}")
@@ -359,7 +364,6 @@ def main_app():
                     ids_no_filtro = df_filtrado['id'].dropna().tolist()
                     df_restante = df_t_lancamentos[~df_t_lancamentos['id'].isin(ids_no_filtro)]
                     
-                    # Tira a coluna de check-box antes de enviar para o banco de dados
                     df_salvar_parcial = ed.dropna(subset=['nome', 'valor']).drop(columns=['Selecionar'], errors='ignore')
                     df_salvar_final = pd.concat([df_restante, df_salvar_parcial, df_t_investimentos], ignore_index=True)
 
