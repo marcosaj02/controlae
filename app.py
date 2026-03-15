@@ -193,6 +193,25 @@ def main_app():
     USER_ID = st.session_state['user_id']
     processar_recorrencias(USER_ID)
 
+    # --- NOVIDADE: Sincronização Inteligente de Categorias (Resolve o problema do iPad/Celular) ---
+    # Ao abrir, o sistema puxa as transações do banco e descobre categorias criadas em outros aparelhos
+    df_t_sync = ler_transacoes(USER_ID)
+    df_r_sync = ler_recorrencias(USER_ID)
+    
+    cats_db = set()
+    if not df_t_sync.empty:
+        cats_db.update(df_t_sync['categoria'].dropna().astype(str).unique())
+    if not df_r_sync.empty:
+        cats_db.update(df_r_sync['categoria'].dropna().astype(str).unique())
+        
+    cats_atuais = set(st.session_state['categorias'])
+    todas_cats = cats_atuais.union(cats_db)
+    
+    # Limpa e atualiza a sessão para todos os aparelhos
+    todas_cats = {c.strip() for c in todas_cats if c and c.strip() != ""}
+    st.session_state['categorias'] = sorted(list(todas_cats))
+    # ----------------------------------------------------------------------------------------------
+
     with st.sidebar:
         st.write(f"Olá, **{st.session_state['user_nome']}** 👋")
         menu = st.radio("Menu", ["Dashboard", "Lançamentos", "Investimentos", "Configurar Recorrências"])
@@ -304,7 +323,7 @@ def main_app():
                 mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
                 coluna_real = mapa_colunas[coluna_ordenacao]
                 
-                # Ordena e reseta o índice do Pandas para remover números irrelevantes
+                # Ordena e reseta o índice (remove os números estranhos da lateral)
                 df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente")).reset_index(drop=True)
 
                 # Inicia desmarcada para que o filtro total seja a visualização padrão
@@ -337,7 +356,7 @@ def main_app():
                 )
                 
                 # --- LÓGICA DE AUTOSSOMA INTELIGENTE ---
-                has_selection = ed['Selecionar'].any() # Verifica se pelo menos uma caixa foi clicada
+                has_selection = ed['Selecionar'].any()
                 
                 if has_selection:
                     receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
@@ -420,7 +439,6 @@ def main_app():
 
                 mapa_colunas_inv = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Tipo": "categoria"}
                 
-                # Ordena e reseta o índice
                 df_i = df_i.sort_values(by=mapa_colunas_inv[coluna_ord_inv], ascending=(direcao_ord_inv == "Crescente")).reset_index(drop=True)
 
                 st.dataframe(
@@ -465,7 +483,6 @@ def main_app():
                 
                 mapa_colunas_rec = {"Descrição": "nome", "Valor": "valor", "Dia de Vencimento": "dia_vencimento", "Categoria": "categoria"}
                 
-                # Ordena e reseta o índice
                 df_r_filtrado = df_r_filtrado.sort_values(by=mapa_colunas_rec[coluna_ord_rec], ascending=(direcao_ord_rec == "Crescente")).reset_index(drop=True)
 
             col_config_recorrencias = {
