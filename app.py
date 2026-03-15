@@ -208,7 +208,6 @@ def main_app():
             mes_atual = date.today().strftime("%Y-%m")
             df_mes = df[df['data'].dt.strftime('%Y-%m') == mes_atual]
             
-            # Métricas Gerais do Topo (Apenas Pagos - Realizado)
             df_pago = df[df['status'] == 'Pago']
             saldo = df_pago[df_pago['tipo'] == 'Receita']['valor'].sum() - df_pago[df_pago['tipo'] == 'Despesa']['valor'].sum()
             
@@ -219,10 +218,7 @@ def main_app():
 
             st.divider()
             
-            # --- VISÃO DOS GRÁFICOS ---
             visao_grafico = st.radio("🔍 Visão dos Gráficos abaixo:", ["Realizado (Apenas Pagos)", "Projetado (Pagos + Pendentes)"], horizontal=True)
-            
-            # Filtra estritamente o mês atual baseado na escolha
             df_mes_plot = df_mes[df_mes['status'] == 'Pago'].copy() if "Realizado" in visao_grafico else df_mes.copy()
 
             col_g1, col_g2 = st.columns(2)
@@ -234,10 +230,8 @@ def main_app():
                     st.info("Nenhum gasto encontrado para a visão selecionada.")
                     
             with col_g2:
-                # Novo gráfico: Comparativo estrito do Mês
                 if not df_mes_plot.empty:
                     df_mes_ev = df_mes_plot[df_mes_plot['tipo'].isin(['Receita', 'Despesa'])].groupby('tipo')['valor'].sum().reset_index()
-                    
                     fig = px.bar(
                         df_mes_ev, 
                         x='tipo', 
@@ -276,24 +270,10 @@ def main_app():
 
     elif menu == "Lançamentos":
         st.title("💸 Lançamentos")
-        t1, t2 = st.tabs(["➕ Novo", "✏️ Editar e Excluir"])
+        # Invertendo a ordem das abas (Edição vem primeiro agora)
+        t1, t2 = st.tabs(["✏️ Editar e Excluir", "➕ Novo"])
+        
         with t1:
-            with st.form("f_g"):
-                c1, c2 = st.columns(2)
-                d_l = c1.date_input("Data", date.today(), format="DD/MM/YYYY")
-                n_l = c2.text_input("Descrição")
-                c3, c4, c5, c6 = st.columns(4)
-                v_l = c3.number_input("Valor", min_value=0.0, format="%.2f", step=0.01)
-                
-                ct_l = c4.selectbox("Categoria", st.session_state['categorias'])
-                tp_l = c5.selectbox("Tipo", ["Despesa", "Receita"])
-                st_l = c6.selectbox("Status", ["Pago", "Pendente"])
-                
-                if st.form_submit_button("Salvar", type="primary"):
-                    adicionar_transacao(USER_ID, d_l, n_l, v_l, ct_l, tp_l, st_l)
-                    st.success("Salvo!")
-                    st.rerun()
-        with t2:
             df_t = ler_transacoes(USER_ID)
             if not df_t.empty:
                 df_t['data'] = pd.to_datetime(df_t['data']).dt.date
@@ -326,10 +306,14 @@ def main_app():
                 coluna_real = mapa_colunas[coluna_ordenacao]
                 df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente"))
 
+                # Nova coluna de controle para a autossoma dinâmica
+                df_filtrado.insert(0, 'Selecionar', True)
+
                 col_config_lancamentos = {
                     "id": None, 
                     "user_id": None, 
                     "origem_recorrencia_id": None, 
+                    "Selecionar": st.column_config.CheckboxColumn("Somar 🧮", default=True),
                     "data": st.column_config.DateColumn("Data", required=True, format="DD/MM/YYYY"),
                     "nome": st.column_config.TextColumn("Descrição", required=True),
                     "valor": st.column_config.NumberColumn("Valor", required=True, format="%.2f"),
@@ -338,35 +322,69 @@ def main_app():
                     "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
                 }
 
-                with st.form("form_editar_lancamentos"):
-                    st.info("💡 **Dica:** Para excluir uma linha, selecione-a clicando na margem esquerda e aperte a tecla `Delete`.")
+                # Espaço reservado para as métricas aparecerem ANTES da tabela
+                metricas_container = st.empty()
 
-                    ed = st.data_editor(
-                        df_filtrado, 
-                        use_container_width=True, 
-                        hide_index=True, 
-                        num_rows="dynamic", 
-                        column_config=col_config_lancamentos
-                    )
+                st.info("💡 **Dica:** Desmarque a caixinha **Somar 🧮** das linhas que você não quer contabilizar na Autossoma. Para excluir uma linha, selecione-a na lateral e aperte `Delete`.")
+
+                # Retirado de dentro do 'st.form' para permitir atualização em tempo real
+                ed = st.data_editor(
+                    df_filtrado, 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    num_rows="dynamic", 
+                    column_config=col_config_lancamentos,
+                    key="editor_lancamentos"
+                )
+                
+                # Cálculos matemáticos da autossoma usando apenas o que estiver ticado na tela
+                receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
+                despesas_sum = ed[(ed['tipo'] == 'Despesa') & (ed['Selecionar'] == True)]['valor'].sum()
+
+                # Renderiza os cards de soma no espaço vazio que separamos acima
+                with metricas_container.container():
+                    cm1, cm2 = st.columns(2)
+                    cm1.metric("📈 Autossoma: Receitas", f"R$ {formatar_moeda(receitas_sum)}")
+                    cm2.metric("📉 Autossoma: Despesas", f"R$ {formatar_moeda(despesas_sum)}")
+                
+                if st.button("💾 Salvar Alterações", type="primary"):
+                    ids_originais = set(df_filtrado['id'].dropna())
+                    ids_editados = set(ed['id'].dropna())
+                    ids_excluidos = ids_originais - ids_editados
                     
-                    if st.form_submit_button("💾 Salvar Alterações", type="primary"):
-                        ids_originais = set(df_filtrado['id'].dropna())
-                        ids_editados = set(ed['id'].dropna())
-                        ids_excluidos = ids_originais - ids_editados
-                        
-                        for id_del in ids_excluidos:
-                            try: deletar_transacao(id_del)
-                            except Exception: pass 
+                    for id_del in ids_excluidos:
+                        try: deletar_transacao(id_del)
+                        except Exception: pass 
 
-                        ids_no_filtro = df_filtrado['id'].dropna().tolist()
-                        df_restante = df_t_lancamentos[~df_t_lancamentos['id'].isin(ids_no_filtro)]
-                        
-                        df_salvar_parcial = ed.dropna(subset=['nome', 'valor'])
-                        df_salvar_final = pd.concat([df_restante, df_salvar_parcial, df_t_investimentos], ignore_index=True)
+                    ids_no_filtro = df_filtrado['id'].dropna().tolist()
+                    df_restante = df_t_lancamentos[~df_t_lancamentos['id'].isin(ids_no_filtro)]
+                    
+                    # Tira a coluna de check-box antes de enviar para o banco de dados
+                    df_salvar_parcial = ed.dropna(subset=['nome', 'valor']).drop(columns=['Selecionar'], errors='ignore')
+                    df_salvar_final = pd.concat([df_restante, df_salvar_parcial, df_t_investimentos], ignore_index=True)
 
-                        atualizar_transacoes(USER_ID, df_salvar_final)
-                        st.success("Alterações salvas!")
-                        st.rerun()
+                    atualizar_transacoes(USER_ID, df_salvar_final)
+                    st.success("Alterações salvas!")
+                    st.rerun()
+            else:
+                st.info("Nenhum lançamento encontrado ainda. Vá na aba 'Novo' para começar.")
+
+        with t2:
+            with st.form("f_g"):
+                c1, c2 = st.columns(2)
+                d_l = c1.date_input("Data", date.today(), format="DD/MM/YYYY")
+                n_l = c2.text_input("Descrição")
+                c3, c4, c5, c6 = st.columns(4)
+                v_l = c3.number_input("Valor", min_value=0.0, format="%.2f", step=0.01)
+                
+                ct_l = c4.selectbox("Categoria", st.session_state['categorias'])
+                tp_l = c5.selectbox("Tipo", ["Despesa", "Receita"])
+                st_l = c6.selectbox("Status", ["Pago", "Pendente"])
+                
+                if st.form_submit_button("Salvar", type="primary"):
+                    adicionar_transacao(USER_ID, d_l, n_l, v_l, ct_l, tp_l, st_l)
+                    st.success("Salvo!")
+                    st.rerun()
 
     elif menu == "Investimentos":
         st.title("📈 Investimentos")
