@@ -38,14 +38,17 @@ def formatar_moeda(valor):
 st.set_page_config(page_title="Gestor Financeiro Pro", layout="wide", page_icon="💳")
 inicializar_db()
 
-# --- 4. CONFIGURAÇÃO DE TEMAS (CSS MODERNO) ---
+# --- 4. CONFIGURAÇÃO DE TEMAS E BARRA LATERAL (CSS MODERNO) ---
 def carregar_tema():
-    tema_escolhido = st.sidebar.selectbox(
-        "🎨 Escolha o Tema", 
-        ["Dark Premium", "Fintech Clean"]
+    # Seletor de tema agora apenas com ícones e sutil
+    tema_sel = st.sidebar.selectbox(
+        "🎨", 
+        ["🌙", "☀️"], 
+        help="Alternar Tema: 🌙 Dark Premium | ☀️ Fintech Clean",
+        label_visibility="collapsed"
     )
 
-    if tema_escolhido == "Dark Premium":
+    if tema_sel == "🌙":
         cor_fundo = "#0E1117"
         cor_texto = "#FAFAFA"
         cor_input = "#262730"
@@ -64,6 +67,30 @@ def carregar_tema():
     [data-testid="stSidebar"] {{ background-color: {cor_input}; }}
     p, h1, h2, h3, label {{ color: {cor_texto} !important; }}
 
+    /* --- COMPACTAÇÃO DA BARRA LATERAL --- */
+    [data-testid="stSidebar"] {{
+        min-width: 85px !important;
+        max-width: 85px !important;
+        padding-top: 1rem;
+    }}
+    
+    /* Centralização dos itens na barra reduzida */
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
+        align-items: center;
+    }}
+    
+    /* Aumentar o tamanho dos ícones do Menu */
+    [data-testid="stSidebar"] .stRadio label p {{
+        font-size: 26px !important;
+        text-align: center;
+        margin: 0;
+        padding: 5px 0;
+    }}
+
+    /* Esconder o cabeçalho nativo da sidebar */
+    [data-testid="stSidebarNav"] {{ display: none; }}
+
+    /* Estilização de Inputs */
     .stTextInput>div>div>input, .stNumberInput>div>div>input, 
     .stSelectbox>div>div>div, .stDateInput>div>div>input {{
         border-radius: 8px;
@@ -193,8 +220,7 @@ def main_app():
     USER_ID = st.session_state['user_id']
     processar_recorrencias(USER_ID)
 
-    # --- NOVIDADE: Sincronização Inteligente de Categorias (Resolve o problema do iPad/Celular) ---
-    # Ao abrir, o sistema puxa as transações do banco e descobre categorias criadas em outros aparelhos
+    # --- Sincronização Inteligente de Categorias ---
     df_t_sync = ler_transacoes(USER_ID)
     df_r_sync = ler_recorrencias(USER_ID)
     
@@ -207,18 +233,40 @@ def main_app():
     cats_atuais = set(st.session_state['categorias'])
     todas_cats = cats_atuais.union(cats_db)
     
-    # Limpa e atualiza a sessão para todos os aparelhos
     todas_cats = {c.strip() for c in todas_cats if c and c.strip() != ""}
     st.session_state['categorias'] = sorted(list(todas_cats))
-    # ----------------------------------------------------------------------------------------------
 
+    # --- BARRA LATERAL MINIMALISTA ---
     with st.sidebar:
-        st.write(f"Olá, **{st.session_state['user_nome']}** 👋")
-        menu = st.radio("Menu", ["Dashboard", "Lançamentos", "Investimentos", "Configurar Recorrências"])
-        if st.button("Sair", use_container_width=True):
+        # Ícone do Usuário
+        inicial_nome = st.session_state['user_nome'][0].upper() if st.session_state['user_nome'] else "👤"
+        st.markdown(f"<h3 style='text-align: center; color: {st.get_option('theme.primaryColor')};' title='Logado como: {st.session_state['user_nome']}'>👤</h3>", unsafe_allow_html=True)
+        st.write("")
+        
+        # Menu apenas com Ícones (O Tooltip aparece ao passar o mouse via parâmetro help)
+        mapa_menu = {
+            "📊": "Dashboard", 
+            "💸": "Lançamentos", 
+            "📈": "Investimentos", 
+            "⚙️": "Configurar Recorrências"
+        }
+        
+        menu_selecionado = st.radio(
+            "Navegação", 
+            list(mapa_menu.keys()), 
+            help="📊 Dashboard | 💸 Lançamentos | 📈 Investimentos | ⚙️ Configurações",
+            label_visibility="collapsed"
+        )
+        
+        menu = mapa_menu[menu_selecionado]
+        
+        st.write("")
+        st.write("")
+        if st.button("🚪", help="Sair do Sistema", use_container_width=True):
             st.session_state['logged_in'] = False
             st.rerun()
 
+    # --- RENDERIZAÇÃO DAS TELAS ---
     if menu == "Dashboard":
         st.title("📊 Visão Estratégica")
         df = ler_transacoes(USER_ID)
@@ -323,7 +371,7 @@ def main_app():
                 mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
                 coluna_real = mapa_colunas[coluna_ordenacao]
                 
-                # Ordena e reseta o índice (remove os números estranhos da lateral)
+                # Ordena e reseta o índice limpando os números embaralhados da coluna lateral (Exigência do Streamlit para o Delete Funcionar)
                 df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente")).reset_index(drop=True)
 
                 # Inicia desmarcada para que o filtro total seja a visualização padrão
