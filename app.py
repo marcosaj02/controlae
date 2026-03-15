@@ -303,7 +303,9 @@ def main_app():
 
                 mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
                 coluna_real = mapa_colunas[coluna_ordenacao]
-                df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente"))
+                
+                # Ordena e reseta o índice do Pandas para remover números irrelevantes
+                df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente")).reset_index(drop=True)
 
                 # Inicia desmarcada para que o filtro total seja a visualização padrão
                 df_filtrado.insert(0, 'Selecionar', False)
@@ -338,15 +340,12 @@ def main_app():
                 has_selection = ed['Selecionar'].any() # Verifica se pelo menos uma caixa foi clicada
                 
                 if has_selection:
-                    # Soma apenas os selecionados
                     receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
                     despesas_sum = ed[(ed['tipo'] == 'Despesa') & (ed['Selecionar'] == True)]['valor'].sum()
                 else:
-                    # Soma tudo que está visível no grid (útil para combinar com o Filtro)
                     receitas_sum = ed[ed['tipo'] == 'Receita']['valor'].sum()
                     despesas_sum = ed[ed['tipo'] == 'Despesa']['valor'].sum()
 
-                # Renderiza os cards estritamente como pedido
                 with metricas_container.container():
                     cm1, cm2 = st.columns(2)
                     cm1.metric("Receita", f"R$ {formatar_moeda(receitas_sum)}")
@@ -420,7 +419,9 @@ def main_app():
                     df_i = df_i[df_i['nome'].str.contains(f_i_texto, case=False, na=False)]
 
                 mapa_colunas_inv = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Tipo": "categoria"}
-                df_i = df_i.sort_values(by=mapa_colunas_inv[coluna_ord_inv], ascending=(direcao_ord_inv == "Crescente"))
+                
+                # Ordena e reseta o índice
+                df_i = df_i.sort_values(by=mapa_colunas_inv[coluna_ord_inv], ascending=(direcao_ord_inv == "Crescente")).reset_index(drop=True)
 
                 st.dataframe(
                     df_i[['data', 'nome', 'valor', 'categoria']], 
@@ -463,7 +464,9 @@ def main_app():
                     df_r_filtrado = df_r_filtrado[df_r_filtrado['categoria'].isin(f_r_cat)]
                 
                 mapa_colunas_rec = {"Descrição": "nome", "Valor": "valor", "Dia de Vencimento": "dia_vencimento", "Categoria": "categoria"}
-                df_r_filtrado = df_r_filtrado.sort_values(by=mapa_colunas_rec[coluna_ord_rec], ascending=(direcao_ord_rec == "Crescente"))
+                
+                # Ordena e reseta o índice
+                df_r_filtrado = df_r_filtrado.sort_values(by=mapa_colunas_rec[coluna_ord_rec], ascending=(direcao_ord_rec == "Crescente")).reset_index(drop=True)
 
             col_config_recorrencias = {
                 "id": None, 
