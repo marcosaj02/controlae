@@ -7,6 +7,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import random
+import json
+import os
 
 # --- 1. FUNÇÃO DE ENVIO DE E-MAIL ---
 def enviar_email(destinatario, assunto, corpo):
@@ -30,9 +32,25 @@ def enviar_email(destinatario, assunto, corpo):
         st.error(f"Erro ao enviar e-mail: {e}")
         return False
 
-# --- 2. FUNÇÃO AUXILIAR PARA FORMATAR MOEDA ---
+# --- 2. FUNÇÕES AUXILIARES E DE CATEGORIAS GLOBAL (Sincronização entre Aparelhos) ---
 def formatar_moeda(valor):
     return f"{valor:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+ARQUIVO_CATEGORIAS = 'categorias.json'
+CATEGORIAS_PADRAO = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros", "Parcelamentos", "Esportes"]
+
+def carregar_categorias():
+    if os.path.exists(ARQUIVO_CATEGORIAS):
+        try:
+            with open(ARQUIVO_CATEGORIAS, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return CATEGORIAS_PADRAO
+    return CATEGORIAS_PADRAO
+
+def salvar_categorias(lista_categorias):
+    with open(ARQUIVO_CATEGORIAS, 'w', encoding='utf-8') as f:
+        json.dump(lista_categorias, f, ensure_ascii=False)
 
 # --- 3. CONFIGURAÇÃO DA PÁGINA E BANCO ---
 st.set_page_config(page_title="Gestor Financeiro Pro", layout="wide", page_icon="💳")
@@ -40,7 +58,6 @@ inicializar_db()
 
 # --- 4. CONFIGURAÇÃO DE TEMAS E BARRA LATERAL (CSS MODERNO) ---
 def carregar_tema():
-    # Seletor de tema agora apenas com ícones e sutil
     tema_sel = st.sidebar.selectbox(
         "🎨", 
         ["🌙", "☀️"], 
@@ -74,12 +91,10 @@ def carregar_tema():
         padding-top: 1rem;
     }}
     
-    /* Centralização dos itens na barra reduzida */
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
         align-items: center;
     }}
     
-    /* Aumentar o tamanho dos ícones do Menu */
     [data-testid="stSidebar"] .stRadio label p {{
         font-size: 26px !important;
         text-align: center;
@@ -87,7 +102,6 @@ def carregar_tema():
         padding: 5px 0;
     }}
 
-    /* Esconder o cabeçalho nativo da sidebar */
     [data-testid="stSidebarNav"] {{ display: none; }}
 
     /* Estilização de Inputs */
@@ -133,15 +147,12 @@ def carregar_tema():
 
 carregar_tema()
 
-# --- 5. INICIALIZAÇÃO DA SESSÃO E VARIÁVEIS GLOBAIS ---
+# --- 5. INICIALIZAÇÃO DA SESSÃO ---
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 'user_id': None, 'user_nome': None,
         'verificacao_pendente': False, 'codigo_gerado': None, 'dados_novo_user': None
     })
-
-if 'categorias' not in st.session_state:
-    st.session_state['categorias'] = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros", "Parcelamentos", "Esportes"]
 
 # --- 6. TELA DE LOGIN & CADASTRO ---
 def tela_login():
@@ -220,7 +231,7 @@ def main_app():
     USER_ID = st.session_state['user_id']
     processar_recorrencias(USER_ID)
 
-    # --- Sincronização Inteligente de Categorias ---
+    # --- Sincronização Global Inteligente de Categorias ---
     df_t_sync = ler_transacoes(USER_ID)
     df_r_sync = ler_recorrencias(USER_ID)
     
@@ -230,20 +241,26 @@ def main_app():
     if not df_r_sync.empty:
         cats_db.update(df_r_sync['categoria'].dropna().astype(str).unique())
         
-    cats_atuais = set(st.session_state['categorias'])
-    todas_cats = cats_atuais.union(cats_db)
+    # Lê as categorias globais do arquivo JSON
+    cats_arquivo = set(carregar_categorias())
+    todas_cats = cats_arquivo.union(cats_db)
     
     todas_cats = {c.strip() for c in todas_cats if c and c.strip() != ""}
-    st.session_state['categorias'] = sorted(list(todas_cats))
+    lista_final_cats = sorted(list(todas_cats))
+    
+    st.session_state['categorias'] = lista_final_cats
+    
+    # Se o banco trouxe categorias novas que não estavam no arquivo, salva para atualizar a nuvem
+    if len(lista_final_cats) > len(cats_arquivo):
+        salvar_categorias(lista_final_cats)
+    # --------------------------------------------------------
 
     # --- BARRA LATERAL MINIMALISTA ---
     with st.sidebar:
-        # Ícone do Usuário
         inicial_nome = st.session_state['user_nome'][0].upper() if st.session_state['user_nome'] else "👤"
         st.markdown(f"<h3 style='text-align: center; color: {st.get_option('theme.primaryColor')};' title='Logado como: {st.session_state['user_nome']}'>👤</h3>", unsafe_allow_html=True)
         st.write("")
         
-        # Menu apenas com Ícones (O Tooltip aparece ao passar o mouse via parâmetro help)
         mapa_menu = {
             "📊": "Dashboard", 
             "💸": "Lançamentos", 
@@ -371,10 +388,7 @@ def main_app():
                 mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
                 coluna_real = mapa_colunas[coluna_ordenacao]
                 
-                # Ordena e reseta o índice limpando os números embaralhados da coluna lateral (Exigência do Streamlit para o Delete Funcionar)
                 df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente")).reset_index(drop=True)
-
-                # Inicia desmarcada para que o filtro total seja a visualização padrão
                 df_filtrado.insert(0, 'Selecionar', False)
 
                 col_config_lancamentos = {
@@ -403,7 +417,6 @@ def main_app():
                     key="editor_lancamentos"
                 )
                 
-                # --- LÓGICA DE AUTOSSOMA INTELIGENTE ---
                 has_selection = ed['Selecionar'].any()
                 
                 if has_selection:
@@ -595,7 +608,8 @@ def main_app():
                     novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
                     
                     st.session_state['categorias'] = novas_categorias
-                    st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo nas outras abas.")
+                    salvar_categorias(novas_categorias) # NOVO: Salva no arquivo global do servidor
+                    st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo em todos os dispositivos.")
                     st.rerun()
 
 if not st.session_state['logged_in']: tela_login()
