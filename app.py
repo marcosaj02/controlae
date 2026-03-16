@@ -32,25 +32,17 @@ def enviar_email(destinatario, assunto, corpo):
         st.error(f"Erro ao enviar e-mail: {e}")
         return False
 
-# --- 2. FUNÇÕES AUXILIARES E DE CATEGORIAS GLOBAL (Sincronização entre Aparelhos) ---
+# --- 2. FUNÇÕES AUXILIARES ---
 def formatar_moeda(valor):
     return f"{valor:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-ARQUIVO_CATEGORIAS = 'categorias.json'
-CATEGORIAS_PADRAO = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros", "Parcelamentos", "Esportes"]
-
-def carregar_categorias():
-    if os.path.exists(ARQUIVO_CATEGORIAS):
-        try:
-            with open(ARQUIVO_CATEGORIAS, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return CATEGORIAS_PADRAO
-    return CATEGORIAS_PADRAO
-
-def salvar_categorias(lista_categorias):
-    with open(ARQUIVO_CATEGORIAS, 'w', encoding='utf-8') as f:
-        json.dump(lista_categorias, f, ensure_ascii=False)
+def descobrir_extensao(byte_data):
+    """Lê os magic bytes do arquivo para descobrir a extensão correta no download"""
+    if not byte_data: return '.bin'
+    if byte_data.startswith(b'%PDF'): return '.pdf'
+    if byte_data.startswith(b'\xff\xd8'): return '.jpg'
+    if byte_data.startswith(b'\x89PNG'): return '.png'
+    return '.bin'
 
 # --- 3. CONFIGURAÇÃO DA PÁGINA E BANCO ---
 st.set_page_config(page_title="Gestor Financeiro Pro", layout="wide", page_icon="💳")
@@ -84,16 +76,13 @@ def carregar_tema():
     [data-testid="stSidebar"] {{ background-color: {cor_input}; }}
     p, h1, h2, h3, label {{ color: {cor_texto} !important; }}
 
-    /* --- COMPACTAÇÃO DA BARRA LATERAL --- */
     [data-testid="stSidebar"] {{
         min-width: 85px !important;
         max-width: 85px !important;
         padding-top: 1rem;
     }}
     
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
-        align-items: center;
-    }}
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{ align-items: center; }}
     
     [data-testid="stSidebar"] .stRadio label p {{
         font-size: 26px !important;
@@ -104,7 +93,6 @@ def carregar_tema():
 
     [data-testid="stSidebarNav"] {{ display: none; }}
 
-    /* Estilização de Inputs */
     .stTextInput>div>div>input, .stNumberInput>div>div>input, 
     .stSelectbox>div>div>div, .stDateInput>div>div>input {{
         border-radius: 8px;
@@ -147,7 +135,7 @@ def carregar_tema():
 
 carregar_tema()
 
-# --- 5. INICIALIZAÇÃO DA SESSÃO E VARIÁVEIS GLOBAIS ---
+# --- 5. INICIALIZAÇÃO DA SESSÃO ---
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 'user_id': None, 'user_nome': None,
@@ -171,7 +159,6 @@ def tela_login():
                 submit_login = st.form_submit_button("Entrar", type="primary", use_container_width=True)
                 
                 if submit_login:
-                    # Passando o nome de usuário sempre com .strip() para remover espaços acidentais
                     user_data = verificar_login(usuario.strip(), senha)
                     if user_data:
                         st.session_state.update({'logged_in': True, 'user_id': user_data[0], 'user_nome': user_data[1]})
@@ -232,27 +219,8 @@ def main_app():
     USER_ID = st.session_state['user_id']
     processar_recorrencias(USER_ID)
 
-    # --- Sincronização Global Inteligente de Categorias ---
-    df_t_sync = ler_transacoes(USER_ID)
-    df_r_sync = ler_recorrencias(USER_ID)
-    
-    cats_db = set()
-    if not df_t_sync.empty:
-        cats_db.update(df_t_sync['categoria'].dropna().astype(str).unique())
-    if not df_r_sync.empty:
-        cats_db.update(df_r_sync['categoria'].dropna().astype(str).unique())
-        
-    cats_arquivo = set(carregar_categorias())
-    todas_cats = cats_arquivo.union(cats_db)
-    
-    todas_cats = {c.strip() for c in todas_cats if c and c.strip() != ""}
-    lista_final_cats = sorted(list(todas_cats))
-    
-    st.session_state['categorias'] = lista_final_cats
-    
-    if len(lista_final_cats) > len(cats_arquivo):
-        salvar_categorias(lista_final_cats)
-    # --------------------------------------------------------
+    lista_final_cats = ler_categorias_db(USER_ID)
+    st.session_state['categorias'] = sorted(lista_final_cats)
 
     # --- BARRA LATERAL MINIMALISTA ---
     with st.sidebar:
@@ -264,7 +232,7 @@ def main_app():
             "📊": "Dashboard", 
             "💸": "Lançamentos", 
             "📈": "Investimentos", 
-            "⚙️": "Configurar Recorrências"
+            "⚙️": "Configurações"
         }
         
         menu_selecionado = st.radio(
@@ -339,12 +307,10 @@ def main_app():
                     for _, r in vencendo.iterrows(): st.warning(f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']} (R$ {formatar_moeda(r['valor'])})")
                 else: st.success("Tudo em dia!")
             with col_d:
-                # --- NOVA LÓGICA DE CONFIRMAÇÃO COM COMPROVANTE ---
                 st.subheader("⏳ Confirmar Pagamento")
                 df_p = df[(df['status'] == 'Pendente') & (df['tipo'] != 'Investimento')].sort_values('data')
                 
                 if not df_p.empty:
-                    # Removido de dentro do st.form para permitir interação dinâmica do File Uploader
                     opts = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
                     sel = st.selectbox("Lançamento:", list(opts.keys()), key="sel_pgto")
                     dt_pago = st.date_input("Data do Pagamento:", value=date.today(), format="DD/MM/YYYY", key="dt_pgto")
@@ -359,7 +325,6 @@ def main_app():
                         if anexar_comprovante == "Sim" and arquivo_comprovante is None:
                             st.warning("⚠️ Por favor, selecione um arquivo ou marque a opção 'Não'.")
                         else:
-                            # Converte o arquivo para bytes se houver, senão envia None
                             arquivo_bytes = arquivo_comprovante.read() if arquivo_comprovante else None
                             confirmar_transacao(opts[sel], dt_pago, arquivo_bytes)
                             st.success("Pagamento confirmado com sucesso!")
@@ -375,96 +340,149 @@ def main_app():
         with t1:
             df_t = ler_transacoes(USER_ID)
             if not df_t.empty:
-                df_t['data'] = pd.to_datetime(df_t['data']).dt.date
+                df_t['data'] = pd.to_datetime(df_t['data'])
                 
-                df_t_investimentos = df_t[df_t['tipo'] == 'Investimento']
-                df_t_lancamentos = df_t[df_t['tipo'] != 'Investimento']
-
-                with st.expander("🔍 Filtros e Ordenação", expanded=False):
-                    st.write("**Filtros**")
-                    c_f1, c_f2, c_f3 = st.columns(3)
-                    f_texto = c_f1.text_input("Buscar por Descrição")
-                    f_cat = c_f2.multiselect("Filtrar Categoria", st.session_state['categorias'])
-                    f_status = c_f3.multiselect("Filtrar Status", ["Pago", "Pendente"])
-                    
-                    st.divider()
-                    st.write("**Ordenar por**")
-                    c_o1, c_o2 = st.columns(2)
-                    coluna_ordenacao = c_o1.selectbox("Coluna", ["Data", "Descrição", "Valor", "Categoria"])
-                    direcao_ordenacao = c_o2.radio("Ordem", ["Crescente", "Decrescente"], horizontal=True)
-
-                df_filtrado = df_t_lancamentos.copy()
-                if f_texto:
-                    df_filtrado = df_filtrado[df_filtrado['nome'].str.contains(f_texto, case=False, na=False)]
-                if f_cat:
-                    df_filtrado = df_filtrado[df_filtrado['categoria'].isin(f_cat)]
-                if f_status:
-                    df_filtrado = df_filtrado[df_filtrado['status'].isin(f_status)]
-
-                mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
-                coluna_real = mapa_colunas[coluna_ordenacao]
-                
-                df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente")).reset_index(drop=True)
-                df_filtrado.insert(0, 'Selecionar', False)
-
-                col_config_lancamentos = {
-                    "id": None, 
-                    "user_id": None, 
-                    "origem_recorrencia_id": None, 
-                    "Selecionar": st.column_config.CheckboxColumn("🧮 Selecionar", default=False),
-                    "data": st.column_config.DateColumn("Data", required=True, format="DD/MM/YYYY"),
-                    "nome": st.column_config.TextColumn("Descrição", required=True),
-                    "valor": st.column_config.NumberColumn("Valor", required=True, format="%.2f"),
-                    "categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state['categorias']),
-                    "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
-                    "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
+                # --- NOVO: LÓGICA DE FILTRO POR MÊS E ANO ---
+                hoje = date.today()
+                meses_dict = {
+                    1: "01 - Janeiro", 2: "02 - Fevereiro", 3: "03 - Março", 4: "04 - Abril",
+                    5: "05 - Maio", 6: "06 - Junho", 7: "07 - Julho", 8: "08 - Agosto",
+                    9: "09 - Setembro", 10: "10 - Outubro", 11: "11 - Novembro", 12: "12 - Dezembro"
                 }
-
-                metricas_container = st.empty()
-
-                st.info("💡 **Atenção à Matemática:** Se nenhuma caixa **🧮 Selecionar** estiver marcada, os valores acima refletem o total geral da tabela/filtro. Caso você marque qualquer caixa, a matemática calcula **apenas** o que foi selecionado.")
-
-                ed = st.data_editor(
-                    df_filtrado, 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    num_rows="dynamic", 
-                    column_config=col_config_lancamentos,
-                    key="editor_lancamentos"
-                )
                 
-                has_selection = ed['Selecionar'].any()
+                anos_db = df_t['data'].dt.year.unique().tolist()
+                anos_disponiveis = sorted(list(set([hoje.year - 1, hoje.year, hoje.year + 1] + anos_db)))
                 
-                if has_selection:
-                    receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
-                    despesas_sum = ed[(ed['tipo'] == 'Despesa') & (ed['Selecionar'] == True)]['valor'].sum()
+                col_m, col_y = st.columns(2)
+                mes_selecionado = col_m.selectbox("Filtrar por Mês:", list(meses_dict.values()), index=hoje.month - 1)
+                ano_selecionado = col_y.selectbox("Filtrar por Ano:", anos_disponiveis, index=anos_disponiveis.index(hoje.year))
+                
+                mes_num = list(meses_dict.keys())[list(meses_dict.values()).index(mes_selecionado)]
+                
+                # Filtra o DataFrame base pelo mês/ano escolhido antes de tudo
+                df_t_mes = df_t[(df_t['data'].dt.month == mes_num) & (df_t['data'].dt.year == ano_selecionado)].copy()
+                # ----------------------------------------------
+
+                if not df_t_mes.empty:
+                    df_t_investimentos = df_t_mes[df_t_mes['tipo'] == 'Investimento']
+                    df_t_lancamentos = df_t_mes[df_t_mes['tipo'] != 'Investimento']
+
+                    with st.expander("🔍 Filtros Avançados e Ordenação", expanded=False):
+                        c_f1, c_f2, c_f3 = st.columns(3)
+                        f_texto = c_f1.text_input("Buscar por Descrição")
+                        f_cat = c_f2.multiselect("Filtrar Categoria", st.session_state['categorias'])
+                        f_status = c_f3.multiselect("Filtrar Status", ["Pago", "Pendente"])
+                        
+                        st.divider()
+                        st.write("**Ordenar por**")
+                        c_o1, c_o2 = st.columns(2)
+                        coluna_ordenacao = c_o1.selectbox("Coluna", ["Data", "Descrição", "Valor", "Categoria"])
+                        direcao_ordenacao = c_o2.radio("Ordem", ["Crescente", "Decrescente"], horizontal=True)
+
+                    df_filtrado = df_t_lancamentos.copy()
+                    if f_texto:
+                        df_filtrado = df_filtrado[df_filtrado['nome'].str.contains(f_texto, case=False, na=False)]
+                    if f_cat:
+                        df_filtrado = df_filtrado[df_filtrado['categoria'].isin(f_cat)]
+                    if f_status:
+                        df_filtrado = df_filtrado[df_filtrado['status'].isin(f_status)]
+
+                    mapa_colunas = {"Data": "data", "Descrição": "nome", "Valor": "valor", "Categoria": "categoria"}
+                    coluna_real = mapa_colunas[coluna_ordenacao]
+                    
+                    df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente")).reset_index(drop=True)
+                    df_filtrado.insert(0, 'Selecionar', False)
+
+                    # Removemos a coluna comprovante da visão do grid para não quebrar a tela com dados binários
+                    df_filtrado_grid = df_filtrado.drop(columns=['comprovante'], errors='ignore')
+
+                    col_config_lancamentos = {
+                        "id": None, 
+                        "user_id": None, 
+                        "origem_recorrencia_id": None, 
+                        "Selecionar": st.column_config.CheckboxColumn("🧮 Selecionar", default=False),
+                        "data": st.column_config.DateColumn("Data", required=True, format="DD/MM/YYYY"),
+                        "nome": st.column_config.TextColumn("Descrição", required=True),
+                        "valor": st.column_config.NumberColumn("Valor", required=True, format="%.2f"),
+                        "categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state['categorias']),
+                        "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
+                        "status": st.column_config.SelectboxColumn("Status", options=["Pago", "Pendente"])
+                    }
+
+                    metricas_container = st.empty()
+
+                    st.info("💡 **Atenção à Matemática:** Se nenhuma caixa **🧮 Selecionar** estiver marcada, os valores acima refletem o total geral da tabela/filtro. Caso você marque qualquer caixa, a matemática calcula **apenas** o que foi selecionado.")
+
+                    ed = st.data_editor(
+                        df_filtrado_grid, 
+                        use_container_width=True, 
+                        hide_index=True, 
+                        num_rows="dynamic", 
+                        column_config=col_config_lancamentos,
+                        key="editor_lancamentos"
+                    )
+                    
+                    has_selection = ed['Selecionar'].any()
+                    
+                    if has_selection:
+                        receitas_sum = ed[(ed['tipo'] == 'Receita') & (ed['Selecionar'] == True)]['valor'].sum()
+                        despesas_sum = ed[(ed['tipo'] == 'Despesa') & (ed['Selecionar'] == True)]['valor'].sum()
+                    else:
+                        receitas_sum = ed[ed['tipo'] == 'Receita']['valor'].sum()
+                        despesas_sum = ed[ed['tipo'] == 'Despesa']['valor'].sum()
+
+                    with metricas_container.container():
+                        cm1, cm2 = st.columns(2)
+                        cm1.metric("Receita", f"R$ {formatar_moeda(receitas_sum)}")
+                        cm2.metric("Despesa", f"R$ {formatar_moeda(despesas_sum)}")
+                    
+                    if st.button("💾 Salvar Alterações", type="primary"):
+                        ids_originais = set(df_filtrado_grid['id'].dropna())
+                        ids_editados = set(ed['id'].dropna())
+                        ids_excluidos = ids_originais - ids_editados
+                        
+                        for id_del in ids_excluidos:
+                            try: deletar_transacao(id_del)
+                            except Exception: pass 
+
+                        ids_no_filtro = df_filtrado_grid['id'].dropna().tolist()
+                        # Busca o restante do banco inteiro (não apenas do mês) para não apagar o passado
+                        df_restante = df_t[~df_t['id'].isin(ids_no_filtro)] 
+                        
+                        df_salvar_parcial = ed.dropna(subset=['nome', 'valor']).drop(columns=['Selecionar'], errors='ignore')
+                        df_salvar_final = pd.concat([df_restante, df_salvar_parcial], ignore_index=True)
+
+                        atualizar_transacoes(USER_ID, df_salvar_final)
+                        st.success("Alterações salvas!")
+                        st.rerun()
+
+                    # --- NOVO: GERENCIADOR DE COMPROVANTES ---
+                    st.divider()
+                    st.subheader("📎 Anexos e Comprovantes")
+                    
+                    # Filtra apenas os lançamentos que possuem arquivo binário salvo
+                    df_com_anexo = df_filtrado[df_filtrado['comprovante'].notna() & (df_filtrado['comprovante'] != b'')]
+                    
+                    if not df_com_anexo.empty:
+                        opts_comp = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']} (R$ {formatar_moeda(r['valor'])})": r['comprovante'] for _, r in df_com_anexo.iterrows()}
+                        sel_comp = st.selectbox("Selecione o Lançamento:", list(opts_comp.keys()))
+                        
+                        if sel_comp:
+                            arquivo_bytes = opts_comp[sel_comp]
+                            extensao = descobrir_extensao(arquivo_bytes)
+                            nome_arquivo = f"Comprovante_{sel_comp.split('-')[1].split('(')[0].strip()}{extensao}"
+                            
+                            st.download_button(
+                                label="⬇️ Baixar Comprovante",
+                                data=arquivo_bytes,
+                                file_name=nome_arquivo,
+                                mime="application/octet-stream"
+                            )
+                    else:
+                        st.info("Nenhum comprovante anexado aos lançamentos deste mês.")
+                        
                 else:
-                    receitas_sum = ed[ed['tipo'] == 'Receita']['valor'].sum()
-                    despesas_sum = ed[ed['tipo'] == 'Despesa']['valor'].sum()
-
-                with metricas_container.container():
-                    cm1, cm2 = st.columns(2)
-                    cm1.metric("Receita", f"R$ {formatar_moeda(receitas_sum)}")
-                    cm2.metric("Despesa", f"R$ {formatar_moeda(despesas_sum)}")
-                
-                if st.button("💾 Salvar Alterações", type="primary"):
-                    ids_originais = set(df_filtrado['id'].dropna())
-                    ids_editados = set(ed['id'].dropna())
-                    ids_excluidos = ids_originais - ids_editados
-                    
-                    for id_del in ids_excluidos:
-                        try: deletar_transacao(id_del)
-                        except Exception: pass 
-
-                    ids_no_filtro = df_filtrado['id'].dropna().tolist()
-                    df_restante = df_t_lancamentos[~df_t_lancamentos['id'].isin(ids_no_filtro)]
-                    
-                    df_salvar_parcial = ed.dropna(subset=['nome', 'valor']).drop(columns=['Selecionar'], errors='ignore')
-                    df_salvar_final = pd.concat([df_restante, df_salvar_parcial, df_t_investimentos], ignore_index=True)
-
-                    atualizar_transacoes(USER_ID, df_salvar_final)
-                    st.success("Alterações salvas!")
-                    st.rerun()
+                    st.info(f"Nenhum lançamento encontrado para {mes_selecionado} de {ano_selecionado}.")
             else:
                 st.info("Nenhum lançamento encontrado ainda. Vá na aba 'Novo' para começar.")
 
@@ -530,8 +548,8 @@ def main_app():
                     }
                 )
 
-    elif menu == "Configurar Recorrências":
-        st.title("⚙️ Contas Fixas e Parâmetros")
+    elif menu == "Configurações":
+        st.title("⚙️ Configurações Gerais")
         
         t1, t2 = st.tabs(["⚙️ Contas Fixas", "🏷️ Categorias"])
         
@@ -608,24 +626,36 @@ def main_app():
         with t2:
             with st.form("form_editar_categorias"):
                 st.subheader("Gerenciar Categorias")
-                st.write("Adicione, edite ou remova as categorias que aparecerão nas listas do sistema. Use a linha em branco no final para adicionar uma nova.")
+                st.write("Adicione uma nova categoria na última linha ou marque a caixa para excluir uma que não use mais.")
                 
                 df_categorias = pd.DataFrame(st.session_state['categorias'], columns=['Categoria'])
+                df_categorias['Excluir'] = False 
                 
+                col_config_cat = {
+                    "Categoria": st.column_config.TextColumn("Categoria", required=True),
+                    "Excluir": st.column_config.CheckboxColumn("Excluir ❌", default=False)
+                }
+                
+                st.info("💡 **Dica:** Marque a caixa **Excluir ❌** para remover uma categoria, ou altere o nome diretamente.")
+
                 ed_categorias = st.data_editor(
                     df_categorias,
                     num_rows="dynamic",
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
+                    column_config=col_config_cat
                 )
                 
                 if st.form_submit_button("💾 Salvar Categorias", type="primary"):
-                    novas_categorias = ed_categorias['Categoria'].dropna().str.strip()
+                    df_categorias_salvar = ed_categorias[ed_categorias['Excluir'] == False].copy()
+                    
+                    novas_categorias = df_categorias_salvar['Categoria'].dropna().str.strip()
                     novas_categorias = novas_categorias[novas_categorias != ""].unique().tolist()
                     
                     st.session_state['categorias'] = novas_categorias
-                    salvar_categorias(novas_categorias) # NOVO: Salva no arquivo global do servidor
-                    st.success("Lista de Categorias atualizada com sucesso! As alterações já estão valendo em todos os dispositivos.")
+                    salvar_categorias_db(USER_ID, novas_categorias)
+                    
+                    st.success("Lista de Categorias atualizada com sucesso no banco de dados!")
                     st.rerun()
 
 if not st.session_state['logged_in']: tela_login()
