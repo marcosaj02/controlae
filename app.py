@@ -46,6 +46,15 @@ def descobrir_extensao(byte_data):
     if byte_data.startswith(b'\x89PNG'): return '.png'
     return '.bin'
 
+def formatar_hhmm(valor_decimal):
+    """Converte horas decimais (ex: 1.5) para formato hora (ex: 01:30h)"""
+    if pd.isna(valor_decimal): return "00:00h"
+    sinal = "-" if valor_decimal < 0 else ""
+    valor_abs = abs(valor_decimal)
+    horas = int(valor_abs)
+    minutos = int(round((valor_abs - horas) * 60))
+    return f"{sinal}{horas:02d}:{minutos:02d}h"
+
 # --- 3. CONFIGURAÇÃO DA PÁGINA E BANCO ---
 st.set_page_config(page_title="Gestor Financeiro Pro", layout="wide", page_icon="💳")
 inicializar_db()
@@ -224,7 +233,6 @@ def main_app():
     lista_final_cats = ler_categorias_db(USER_ID)
     st.session_state['categorias'] = sorted(lista_final_cats)
 
-    # --- BARRA LATERAL MINIMALISTA ---
     with st.sidebar:
         inicial_nome = st.session_state['user_nome'][0].upper() if st.session_state['user_nome'] else "👤"
         st.markdown(f"<h3 style='text-align: center; color: {st.get_option('theme.primaryColor')};' title='Logado como: {st.session_state['user_nome']}'>👤</h3>", unsafe_allow_html=True)
@@ -234,7 +242,7 @@ def main_app():
             "📊": "Dashboard", 
             "💸": "Lançamentos", 
             "📈": "Investimentos", 
-            "⏱️": "Gestão de Projetos", # NOVO MÓDULO
+            "⏱️": "Gestão de Projetos",
             "⚙️": "Configurações"
         }
         
@@ -465,12 +473,6 @@ def main_app():
                         
                         if sel_comp:
                             arquivo_bytes = opts_comp[sel_comp]
-                            
-                            if isinstance(arquivo_bytes, memoryview):
-                                arquivo_bytes = arquivo_bytes.tobytes()
-                            elif not isinstance(arquivo_bytes, bytes):
-                                arquivo_bytes = bytes(arquivo_bytes)
-                                
                             extensao = descobrir_extensao(arquivo_bytes)
                             nome_arquivo = f"Comprovante_{sel_comp.split('-')[1].split('(')[0].strip()}{extensao}"
                             
@@ -550,7 +552,6 @@ def main_app():
                     }
                 )
 
-    # --- NOVO MÓDULO: GESTÃO DE PROJETOS E TIMESHEET ---
     elif menu == "Gestão de Projetos":
         st.title("⏱️ Gestão de Projetos e Apontamentos")
         
@@ -568,22 +569,27 @@ def main_app():
                 with st.container():
                     st.subheader("Lançar Horas")
                     with st.form("form_apontamento"):
-                        c1, c2, c3 = st.columns([1, 2, 1])
+                        c1, c2, c3, c4 = st.columns([1.5, 2.5, 1, 1])
                         apt_data = c1.date_input("Data", date.today(), format="DD/MM/YYYY")
                         apt_cliente = c2.selectbox("Cliente", clientes_lista)
-                        apt_horas = c3.number_input("Horas Gastas", min_value=0.0, format="%.2f", step=0.5)
                         
-                        c4, c5 = st.columns([1, 1])
-                        apt_chamado = c4.text_input("Nr. do Chamado", max_chars=20)
-                        apt_projeto = c5.text_input("Projeto (Opcional)")
+                        # --- NOVIDADE: Input intuitivo de Tempo (Horas e Minutos) ---
+                        apt_h = c3.number_input("Horas", min_value=0, step=1)
+                        apt_m = c4.selectbox("Min", ["00", "15", "30", "45"])
                         
-                        c6, c7 = st.columns([3, 1])
-                        apt_desc = c6.text_input("Descrição da Atividade")
-                        apt_recurso = c7.selectbox("Recurso", ["Funcional", "ABAP"])
+                        c5, c6 = st.columns([1, 1])
+                        apt_chamado = c5.text_input("Nr. do Chamado", max_chars=20)
+                        apt_projeto = c6.text_input("Projeto (Opcional)")
+                        
+                        c7, c8 = st.columns([3, 1])
+                        apt_desc = c7.text_input("Descrição da Atividade")
+                        apt_recurso = c8.selectbox("Recurso", ["Funcional", "ABAP"])
                         
                         if st.form_submit_button("💾 Salvar Apontamento", type="primary"):
-                            if apt_horas > 0 and apt_desc:
-                                adicionar_apontamento(USER_ID, apt_data, apt_cliente, apt_chamado, apt_projeto, apt_desc, apt_recurso, apt_horas)
+                            # Converte a seleção intuitiva para decimal para o BD
+                            apt_horas_dec = apt_h + (int(apt_m) / 60.0)
+                            if apt_horas_dec > 0 and apt_desc:
+                                adicionar_apontamento(USER_ID, apt_data, apt_cliente, apt_chamado, apt_projeto, apt_desc, apt_recurso, apt_horas_dec)
                                 st.success("Horas lançadas com sucesso!")
                                 st.rerun()
                             else:
@@ -594,7 +600,6 @@ def main_app():
                 cliente_saldo_sel = st.selectbox("Selecione o Cliente para ver o saldo:", clientes_lista)
                 
                 if cliente_saldo_sel:
-                    # Cálculo em tempo real do saldo
                     info_cli = df_clientes[df_clientes['nome'] == cliente_saldo_sel].iloc[0]
                     saldo_anual_contratado = info_cli['saldo_horas']
                     
@@ -608,14 +613,14 @@ def main_app():
                     saldo_restante = saldo_anual_contratado - horas_consumidas_ano
                     
                     mc1, mc2, mc3 = st.columns(3)
-                    mc1.metric("Saldo Anual Contratado", f"{saldo_anual_contratado}h")
-                    mc2.metric("Horas Consumidas no Ano", f"{horas_consumidas_ano}h")
-                    mc3.metric("Saldo Restante", f"{saldo_restante}h", delta=f"{(saldo_restante/saldo_anual_contratado)*100:.1f}%" if saldo_anual_contratado>0 else "0%")
+                    # --- Aplicação da função formatar_hhmm para visual perfeito ---
+                    mc1.metric("Saldo Anual Contratado", formatar_hhmm(saldo_anual_contratado))
+                    mc2.metric("Horas Consumidas no Ano", formatar_hhmm(horas_consumidas_ano))
+                    mc3.metric("Saldo Restante", formatar_hhmm(saldo_restante), delta=f"{(saldo_restante/saldo_anual_contratado)*100:.1f}%" if saldo_anual_contratado>0 else "0%")
 
                 st.divider()
                 st.write("**Histórico de Lançamentos (Editar/Excluir)**")
                 if not df_apt_full.empty:
-                    # Configuração para o Grid
                     df_apt_edit = df_apt_full.copy()
                     df_apt_edit['data'] = pd.to_datetime(df_apt_edit['data']).dt.date
                     
@@ -627,7 +632,7 @@ def main_app():
                         "projeto": st.column_config.TextColumn("Projeto"),
                         "descricao": st.column_config.TextColumn("Descrição"),
                         "recurso": st.column_config.SelectboxColumn("Recurso", options=["Funcional", "ABAP"]),
-                        "horas": st.column_config.NumberColumn("Horas", required=True, format="%.2f")
+                        "horas": st.column_config.NumberColumn("Horas (Decimais)", required=True, format="%g h", help="O banco usa decimais. 1h30 min = 1.5")
                     }
                     
                     with st.form("edit_apontamentos"):
@@ -677,7 +682,7 @@ def main_app():
                         valor_faturar = total_horas * taxa_hora
                         
                         m1, m2 = st.columns(2)
-                        m1.metric("Horas Trabalhadas no Mês", f"{total_horas}h")
+                        m1.metric("Horas Trabalhadas no Mês", formatar_hhmm(total_horas))
                         m2.metric("Valor a Faturar do Cliente", f"R$ {formatar_moeda(valor_faturar)}")
                         
                         st.divider()
@@ -698,6 +703,9 @@ def main_app():
                         st.write("**Extrato Detalhado para o Cliente:**")
                         df_display = df_final[['data', 'chamado', 'projeto', 'descricao', 'recurso', 'horas']].copy()
                         df_display['data'] = df_display['data'].dt.strftime('%d/%m/%Y')
+                        
+                        # Converte a coluna de exibição para o formato amigável de horas
+                        df_display['horas'] = df_display['horas'].apply(formatar_hhmm)
                         st.dataframe(df_display, use_container_width=True, hide_index=True)
                     else:
                         st.info("Nenhum apontamento para este cliente neste período.")
