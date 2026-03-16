@@ -39,6 +39,13 @@ def formatar_moeda(valor):
 def descobrir_extensao(byte_data):
     """Lê os magic bytes do arquivo para descobrir a extensão correta no download"""
     if not byte_data: return '.bin'
+    
+    # CORREÇÃO: Converte memoryview do Postgres para bytes puros
+    if isinstance(byte_data, memoryview):
+        byte_data = byte_data.tobytes()
+    elif not isinstance(byte_data, bytes):
+        byte_data = bytes(byte_data)
+        
     if byte_data.startswith(b'%PDF'): return '.pdf'
     if byte_data.startswith(b'\xff\xd8'): return '.jpg'
     if byte_data.startswith(b'\x89PNG'): return '.png'
@@ -342,7 +349,6 @@ def main_app():
             if not df_t.empty:
                 df_t['data'] = pd.to_datetime(df_t['data'])
                 
-                # --- NOVO: LÓGICA DE FILTRO POR MÊS E ANO ---
                 hoje = date.today()
                 meses_dict = {
                     1: "01 - Janeiro", 2: "02 - Fevereiro", 3: "03 - Março", 4: "04 - Abril",
@@ -359,9 +365,7 @@ def main_app():
                 
                 mes_num = list(meses_dict.keys())[list(meses_dict.values()).index(mes_selecionado)]
                 
-                # Filtra o DataFrame base pelo mês/ano escolhido antes de tudo
                 df_t_mes = df_t[(df_t['data'].dt.month == mes_num) & (df_t['data'].dt.year == ano_selecionado)].copy()
-                # ----------------------------------------------
 
                 if not df_t_mes.empty:
                     df_t_investimentos = df_t_mes[df_t_mes['tipo'] == 'Investimento']
@@ -393,7 +397,6 @@ def main_app():
                     df_filtrado = df_filtrado.sort_values(by=coluna_real, ascending=(direcao_ordenacao == "Crescente")).reset_index(drop=True)
                     df_filtrado.insert(0, 'Selecionar', False)
 
-                    # Removemos a coluna comprovante da visão do grid para não quebrar a tela com dados binários
                     df_filtrado_grid = df_filtrado.drop(columns=['comprovante'], errors='ignore')
 
                     col_config_lancamentos = {
@@ -446,7 +449,6 @@ def main_app():
                             except Exception: pass 
 
                         ids_no_filtro = df_filtrado_grid['id'].dropna().tolist()
-                        # Busca o restante do banco inteiro (não apenas do mês) para não apagar o passado
                         df_restante = df_t[~df_t['id'].isin(ids_no_filtro)] 
                         
                         df_salvar_parcial = ed.dropna(subset=['nome', 'valor']).drop(columns=['Selecionar'], errors='ignore')
@@ -456,7 +458,7 @@ def main_app():
                         st.success("Alterações salvas!")
                         st.rerun()
 
-                    # --- NOVO: GERENCIADOR DE COMPROVANTES ---
+                    # --- GERENCIADOR DE COMPROVANTES ---
                     st.divider()
                     st.subheader("📎 Anexos e Comprovantes")
                     
@@ -469,6 +471,13 @@ def main_app():
                         
                         if sel_comp:
                             arquivo_bytes = opts_comp[sel_comp]
+                            
+                            # Transforma em bytes limpos para o botão de download processar corretamente
+                            if isinstance(arquivo_bytes, memoryview):
+                                arquivo_bytes = arquivo_bytes.tobytes()
+                            elif not isinstance(arquivo_bytes, bytes):
+                                arquivo_bytes = bytes(arquivo_bytes)
+                                
                             extensao = descobrir_extensao(arquivo_bytes)
                             nome_arquivo = f"Comprovante_{sel_comp.split('-')[1].split('(')[0].strip()}{extensao}"
                             
