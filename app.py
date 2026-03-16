@@ -74,12 +74,14 @@ def carregar_tema():
         cor_input = "#262730"
         cor_accent = "#8B5CF6" 
         cor_borda = "rgba(255,255,255,0.1)"
+        cor_grafico = "#8B5CF6"
     else:
         cor_fundo = "#F0F2F6"
         cor_texto = "#111827"
         cor_input = "#FFFFFF"
         cor_accent = "#007BFF" 
         cor_borda = "rgba(0,0,0,0.1)"
+        cor_grafico = "#007BFF"
 
     css = f"""
     <style>
@@ -143,8 +145,9 @@ def carregar_tema():
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
+    return cor_grafico
 
-carregar_tema()
+cor_grafico_atual = carregar_tema()
 
 # --- 5. INICIALIZAÇÃO DA SESSÃO ---
 if 'logged_in' not in st.session_state:
@@ -473,6 +476,12 @@ def main_app():
                         
                         if sel_comp:
                             arquivo_bytes = opts_comp[sel_comp]
+                            
+                            if isinstance(arquivo_bytes, memoryview):
+                                arquivo_bytes = arquivo_bytes.tobytes()
+                            elif not isinstance(arquivo_bytes, bytes):
+                                arquivo_bytes = bytes(arquivo_bytes)
+                                
                             extensao = descobrir_extensao(arquivo_bytes)
                             nome_arquivo = f"Comprovante_{sel_comp.split('-')[1].split('(')[0].strip()}{extensao}"
                             
@@ -573,7 +582,6 @@ def main_app():
                         apt_data = c1.date_input("Data", date.today(), format="DD/MM/YYYY")
                         apt_cliente = c2.selectbox("Cliente", clientes_lista)
                         
-                        # --- NOVIDADE: Input intuitivo de Tempo (Horas e Minutos) ---
                         apt_h = c3.number_input("Horas", min_value=0, step=1)
                         apt_m = c4.selectbox("Min", ["00", "15", "30", "45"])
                         
@@ -586,7 +594,6 @@ def main_app():
                         apt_recurso = c8.selectbox("Recurso", ["Funcional", "ABAP"])
                         
                         if st.form_submit_button("💾 Salvar Apontamento", type="primary"):
-                            # Converte a seleção intuitiva para decimal para o BD
                             apt_horas_dec = apt_h + (int(apt_m) / 60.0)
                             if apt_horas_dec > 0 and apt_desc:
                                 adicionar_apontamento(USER_ID, apt_data, apt_cliente, apt_chamado, apt_projeto, apt_desc, apt_recurso, apt_horas_dec)
@@ -613,7 +620,6 @@ def main_app():
                     saldo_restante = saldo_anual_contratado - horas_consumidas_ano
                     
                     mc1, mc2, mc3 = st.columns(3)
-                    # --- Aplicação da função formatar_hhmm para visual perfeito ---
                     mc1.metric("Saldo Anual Contratado", formatar_hhmm(saldo_anual_contratado))
                     mc2.metric("Horas Consumidas no Ano", formatar_hhmm(horas_consumidas_ano))
                     mc3.metric("Saldo Restante", formatar_hhmm(saldo_restante), delta=f"{(saldo_restante/saldo_anual_contratado)*100:.1f}%" if saldo_anual_contratado>0 else "0%")
@@ -632,7 +638,7 @@ def main_app():
                         "projeto": st.column_config.TextColumn("Projeto"),
                         "descricao": st.column_config.TextColumn("Descrição"),
                         "recurso": st.column_config.SelectboxColumn("Recurso", options=["Funcional", "ABAP"]),
-                        "horas": st.column_config.NumberColumn("Horas (Decimais)", required=True, format="%g h", help="O banco usa decimais. 1h30 min = 1.5")
+                        "horas": st.column_config.NumberColumn("Horas (Decimais)", required=True, format="%g", help="O banco usa decimais. 1h30 min = 1.5")
                     }
                     
                     with st.form("edit_apontamentos"):
@@ -667,48 +673,65 @@ def main_app():
                     
                     cx1, cx2, cx3 = st.columns(3)
                     ext_cliente = cx1.selectbox("Filtrar Cliente:", clientes_lista)
-                    ext_mes = cx2.selectbox("Mês:", list(meses_dict.values()), index=hoje.month - 1)
-                    ext_ano = cx3.selectbox("Ano:", sorted(anos_apt, reverse=True))
+                    ext_mes = cx2.selectbox("Mês do Extrato:", list(meses_dict.values()), index=hoje.month - 1)
+                    ext_ano = cx3.selectbox("Ano Base:", sorted(anos_apt, reverse=True))
                     
                     mes_num = list(meses_dict.keys())[list(meses_dict.values()).index(ext_mes)]
                     
-                    df_final = df_apt_extrato[(df_apt_extrato['cliente'] == ext_cliente) & 
-                                              (df_apt_extrato['data'].dt.month == mes_num) & 
-                                              (df_apt_extrato['data'].dt.year == ext_ano)]
+                    # Filtra os dados do Ano selecionado para o Gráfico de Barras
+                    df_ano_grafico = df_apt_extrato[(df_apt_extrato['cliente'] == ext_cliente) & 
+                                                    (df_apt_extrato['data'].dt.year == ext_ano)]
+                                                    
+                    # Filtra os dados do Mês selecionado para a Tabela e Pizza
+                    df_mes_detalhe = df_ano_grafico[df_ano_grafico['data'].dt.month == mes_num]
                                               
-                    if not df_final.empty:
-                        total_horas = df_final['horas'].sum()
-                        taxa_hora = df_clientes[df_clientes['nome'] == ext_cliente].iloc[0]['valor_hora']
-                        valor_faturar = total_horas * taxa_hora
+                    if not df_ano_grafico.empty:
+                        total_horas_mes = df_mes_detalhe['horas'].sum() if not df_mes_detalhe.empty else 0
+                        total_horas_ano = df_ano_grafico['horas'].sum()
                         
                         m1, m2 = st.columns(2)
-                        m1.metric("Horas Trabalhadas no Mês", formatar_hhmm(total_horas))
-                        m2.metric("Valor a Faturar do Cliente", f"R$ {formatar_moeda(valor_faturar)}")
+                        m1.metric(f"Horas Consumidas ({ext_mes})", formatar_hhmm(total_horas_mes))
+                        m2.metric(f"Total Acumulado ({ext_ano})", formatar_hhmm(total_horas_ano))
                         
                         st.divider()
                         
                         g1, g2 = st.columns(2)
                         with g1:
-                            df_rec = df_final.groupby('recurso')['horas'].sum().reset_index()
-                            fig_rec = px.pie(df_rec, values='horas', names='recurso', hole=0.5, title="Distribuição por Recurso")
-                            fig_rec.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
-                            st.plotly_chart(fig_rec, use_container_width=True)
-                            
+                            if not df_mes_detalhe.empty:
+                                df_rec = df_mes_detalhe.groupby('recurso')['horas'].sum().reset_index()
+                                fig_rec = px.pie(df_rec, values='horas', names='recurso', hole=0.5, title=f"Distribuição por Recurso ({ext_mes})")
+                                fig_rec.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
+                                st.plotly_chart(fig_rec, use_container_width=True)
+                            else:
+                                st.info(f"Sem horas lançadas em {ext_mes}.")
+                                
                         with g2:
-                            df_dia = df_final.groupby(df_final['data'].dt.strftime('%d/%m'))['horas'].sum().reset_index()
-                            fig_dia = px.bar(df_dia, x='data', y='horas', title="Consumo Diário de Horas")
-                            fig_dia.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
-                            st.plotly_chart(fig_dia, use_container_width=True)
+                            # --- NOVO: Lógica do Gráfico de Barras Mensal ao longo do Ano ---
+                            df_evolucao = df_ano_grafico.copy()
+                            df_evolucao['mes_num'] = df_evolucao['data'].dt.month
+                            df_grp = df_evolucao.groupby('mes_num')['horas'].sum().reset_index()
+                            
+                            map_meses = {1:'Jan', 2:'Fev', 3:'Mar', 4:'Abr', 5:'Mai', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Set', 10:'Out', 11:'Nov', 12:'Dez'}
+                            df_grp['Mês'] = df_grp['mes_num'].map(map_meses)
+                            df_grp = df_grp.sort_values('mes_num')
+                            
+                            fig_ano = px.bar(df_grp, x='Mês', y='horas', title=f"Evolução Mensal do Consumo ({ext_ano})", text_auto='.1f')
+                            fig_ano.update_traces(marker_color=cor_grafico_atual)
+                            fig_ano.update_xaxes(title="")
+                            fig_ano.update_yaxes(title="")
+                            fig_ano.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
+                            st.plotly_chart(fig_ano, use_container_width=True)
                         
-                        st.write("**Extrato Detalhado para o Cliente:**")
-                        df_display = df_final[['data', 'chamado', 'projeto', 'descricao', 'recurso', 'horas']].copy()
-                        df_display['data'] = df_display['data'].dt.strftime('%d/%m/%Y')
-                        
-                        # Converte a coluna de exibição para o formato amigável de horas
-                        df_display['horas'] = df_display['horas'].apply(formatar_hhmm)
-                        st.dataframe(df_display, use_container_width=True, hide_index=True)
+                        st.write(f"**Extrato Detalhado para o Cliente ({ext_mes}):**")
+                        if not df_mes_detalhe.empty:
+                            df_display = df_mes_detalhe[['data', 'chamado', 'projeto', 'descricao', 'recurso', 'horas']].copy()
+                            df_display['data'] = df_display['data'].dt.strftime('%d/%m/%Y')
+                            df_display['horas'] = df_display['horas'].apply(formatar_hhmm)
+                            st.dataframe(df_display, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("Nenhum apontamento detalhado para o mês selecionado.")
                     else:
-                        st.info("Nenhum apontamento para este cliente neste período.")
+                        st.info("Nenhum apontamento para este cliente no ano selecionado.")
                 else:
                     st.info("Faça o seu primeiro apontamento na aba ao lado.")
                     
