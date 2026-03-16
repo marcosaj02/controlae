@@ -147,7 +147,7 @@ def carregar_tema():
 
 carregar_tema()
 
-# --- 5. INICIALIZAÇÃO DA SESSÃO ---
+# --- 5. INICIALIZAÇÃO DA SESSÃO E VARIÁVEIS GLOBAIS ---
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 'user_id': None, 'user_nome': None,
@@ -171,7 +171,8 @@ def tela_login():
                 submit_login = st.form_submit_button("Entrar", type="primary", use_container_width=True)
                 
                 if submit_login:
-                    user_data = verificar_login(usuario, senha)
+                    # Passando o nome de usuário sempre com .strip() para remover espaços acidentais
+                    user_data = verificar_login(usuario.strip(), senha)
                     if user_data:
                         st.session_state.update({'logged_in': True, 'user_id': user_data[0], 'user_nome': user_data[1]})
                         st.rerun()
@@ -197,8 +198,8 @@ def tela_login():
                         else:
                             codigo = str(random.randint(100000, 999999))
                             corpo = f"<h3>Seu código Controlaê:</h3><h2 style='color: #8B5CF6;'>{codigo}</h2>"
-                            if enviar_email(novo_email, "Código de Validação", corpo):
-                                st.session_state.update({'codigo_gerado': codigo, 'verificacao_pendente': True, 'dados_novo_user': {'user': novo_user, 'email': novo_email, 'senha': nova_senha, 'nome': novo_nome}})
+                            if enviar_email(novo_email.strip(), "Código de Validação", corpo):
+                                st.session_state.update({'codigo_gerado': codigo, 'verificacao_pendente': True, 'dados_novo_user': {'user': novo_user.strip(), 'email': novo_email.strip(), 'senha': nova_senha, 'nome': novo_nome.strip()}})
                                 st.rerun()
             else:
                 with st.form("validacao_form"):
@@ -220,9 +221,9 @@ def tela_login():
             with st.form("recupera_form"):
                 email_rec = st.text_input("E-mail cadastrado")
                 if st.form_submit_button("Recuperar Acesso", use_container_width=True):
-                    existe, user_rec = recuperar_senha(email_rec)
+                    existe, user_rec = recuperar_senha(email_rec.strip())
                     if existe:
-                        enviar_email(email_rec, "Recuperação", f"Seu usuário é: <b>{user_rec}</b>")
+                        enviar_email(email_rec.strip(), "Recuperação", f"Seu usuário é: <b>{user_rec}</b>")
                         st.success("✅ Usuário enviado por e-mail.")
                     else: st.error("❌ E-mail não encontrado.")
 
@@ -241,7 +242,6 @@ def main_app():
     if not df_r_sync.empty:
         cats_db.update(df_r_sync['categoria'].dropna().astype(str).unique())
         
-    # Lê as categorias globais do arquivo JSON
     cats_arquivo = set(carregar_categorias())
     todas_cats = cats_arquivo.union(cats_db)
     
@@ -250,7 +250,6 @@ def main_app():
     
     st.session_state['categorias'] = lista_final_cats
     
-    # Se o banco trouxe categorias novas que não estavam no arquivo, salva para atualizar a nuvem
     if len(lista_final_cats) > len(cats_arquivo):
         salvar_categorias(lista_final_cats)
     # --------------------------------------------------------
@@ -340,16 +339,33 @@ def main_app():
                     for _, r in vencendo.iterrows(): st.warning(f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']} (R$ {formatar_moeda(r['valor'])})")
                 else: st.success("Tudo em dia!")
             with col_d:
+                # --- NOVA LÓGICA DE CONFIRMAÇÃO COM COMPROVANTE ---
                 st.subheader("⏳ Confirmar Pagamento")
                 df_p = df[(df['status'] == 'Pendente') & (df['tipo'] != 'Investimento')].sort_values('data')
+                
                 if not df_p.empty:
-                    with st.form("form_confirmar_pagamento"):
-                        opts = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
-                        sel = st.selectbox("Lançamento:", list(opts.keys()))
-                        dt_pago = st.date_input("Data do Pagamento:", value=date.today(), format="DD/MM/YYYY")
-                        if st.form_submit_button("✅ Confirmar Pago", type="primary", use_container_width=True):
-                            confirmar_transacao(opts[sel], dt_pago)
+                    # Removido de dentro do st.form para permitir interação dinâmica do File Uploader
+                    opts = {f"{r['data'].strftime('%d/%m/%Y')} - {r['nome']}": r['id'] for _, r in df_p.iterrows()}
+                    sel = st.selectbox("Lançamento:", list(opts.keys()), key="sel_pgto")
+                    dt_pago = st.date_input("Data do Pagamento:", value=date.today(), format="DD/MM/YYYY", key="dt_pgto")
+                    
+                    anexar_comprovante = st.radio("Anexar Comprovante?", ["Não", "Sim"], horizontal=True)
+                    arquivo_comprovante = None
+                    
+                    if anexar_comprovante == "Sim":
+                        arquivo_comprovante = st.file_uploader("Selecione o arquivo", type=["jpg", "jpeg", "png", "pdf"])
+                        
+                    if st.button("✅ Confirmar Pago", type="primary", use_container_width=True):
+                        if anexar_comprovante == "Sim" and arquivo_comprovante is None:
+                            st.warning("⚠️ Por favor, selecione um arquivo ou marque a opção 'Não'.")
+                        else:
+                            # Converte o arquivo para bytes se houver, senão envia None
+                            arquivo_bytes = arquivo_comprovante.read() if arquivo_comprovante else None
+                            confirmar_transacao(opts[sel], dt_pago, arquivo_bytes)
+                            st.success("Pagamento confirmado com sucesso!")
                             st.rerun()
+                else:
+                    st.info("Nenhuma conta pendente para confirmação.")
         else: st.info("Sem lançamentos ainda.")
 
     elif menu == "Lançamentos":
