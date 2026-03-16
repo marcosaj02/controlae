@@ -37,14 +37,9 @@ def formatar_moeda(valor):
     return f"{valor:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 def descobrir_extensao(byte_data):
-    """Lê os magic bytes do arquivo para descobrir a extensão correta no download"""
     if not byte_data: return '.bin'
-    
-    # CORREÇÃO: Converte memoryview do Postgres para bytes puros
-    if isinstance(byte_data, memoryview):
-        byte_data = byte_data.tobytes()
-    elif not isinstance(byte_data, bytes):
-        byte_data = bytes(byte_data)
+    if isinstance(byte_data, memoryview): byte_data = byte_data.tobytes()
+    elif not isinstance(byte_data, bytes): byte_data = bytes(byte_data)
         
     if byte_data.startswith(b'%PDF'): return '.pdf'
     if byte_data.startswith(b'\xff\xd8'): return '.jpg'
@@ -239,13 +234,14 @@ def main_app():
             "📊": "Dashboard", 
             "💸": "Lançamentos", 
             "📈": "Investimentos", 
+            "⏱️": "Gestão de Projetos", # NOVO MÓDULO
             "⚙️": "Configurações"
         }
         
         menu_selecionado = st.radio(
             "Navegação", 
             list(mapa_menu.keys()), 
-            help="📊 Dashboard | 💸 Lançamentos | 📈 Investimentos | ⚙️ Configurações",
+            help="📊 Dashboard | 💸 Lançamentos | 📈 Investimentos | ⏱️ Gestão de Projetos | ⚙️ Configurações",
             label_visibility="collapsed"
         )
         
@@ -458,11 +454,9 @@ def main_app():
                         st.success("Alterações salvas!")
                         st.rerun()
 
-                    # --- GERENCIADOR DE COMPROVANTES ---
                     st.divider()
                     st.subheader("📎 Anexos e Comprovantes")
                     
-                    # Filtra apenas os lançamentos que possuem arquivo binário salvo
                     df_com_anexo = df_filtrado[df_filtrado['comprovante'].notna() & (df_filtrado['comprovante'] != b'')]
                     
                     if not df_com_anexo.empty:
@@ -472,7 +466,6 @@ def main_app():
                         if sel_comp:
                             arquivo_bytes = opts_comp[sel_comp]
                             
-                            # Transforma em bytes limpos para o botão de download processar corretamente
                             if isinstance(arquivo_bytes, memoryview):
                                 arquivo_bytes = arquivo_bytes.tobytes()
                             elif not isinstance(arquivo_bytes, bytes):
@@ -556,6 +549,187 @@ def main_app():
                         "categoria": st.column_config.TextColumn("Tipo")
                     }
                 )
+
+    # --- NOVO MÓDULO: GESTÃO DE PROJETOS E TIMESHEET ---
+    elif menu == "Gestão de Projetos":
+        st.title("⏱️ Gestão de Projetos e Apontamentos")
+        
+        df_clientes = ler_clientes(USER_ID)
+        clientes_lista = df_clientes['nome'].tolist() if not df_clientes.empty else []
+        
+        t1, t2, t3 = st.tabs(["⏱️ Apontamentos", "📊 Extrato e Dashboard", "👥 Cadastro de Clientes"])
+        
+        with t1:
+            if not clientes_lista:
+                st.warning("⚠️ Você precisa cadastrar um cliente na aba 'Cadastro de Clientes' antes de lançar horas.")
+            else:
+                df_apt_full = ler_apontamentos(USER_ID)
+                
+                with st.container():
+                    st.subheader("Lançar Horas")
+                    with st.form("form_apontamento"):
+                        c1, c2, c3 = st.columns([1, 2, 1])
+                        apt_data = c1.date_input("Data", date.today(), format="DD/MM/YYYY")
+                        apt_cliente = c2.selectbox("Cliente", clientes_lista)
+                        apt_horas = c3.number_input("Horas Gastas", min_value=0.0, format="%.2f", step=0.5)
+                        
+                        c4, c5 = st.columns([1, 1])
+                        apt_chamado = c4.text_input("Nr. do Chamado", max_chars=20)
+                        apt_projeto = c5.text_input("Projeto (Opcional)")
+                        
+                        c6, c7 = st.columns([3, 1])
+                        apt_desc = c6.text_input("Descrição da Atividade")
+                        apt_recurso = c7.selectbox("Recurso", ["Funcional", "ABAP"])
+                        
+                        if st.form_submit_button("💾 Salvar Apontamento", type="primary"):
+                            if apt_horas > 0 and apt_desc:
+                                adicionar_apontamento(USER_ID, apt_data, apt_cliente, apt_chamado, apt_projeto, apt_desc, apt_recurso, apt_horas)
+                                st.success("Horas lançadas com sucesso!")
+                                st.rerun()
+                            else:
+                                st.warning("Preencha as Horas Gastas e a Descrição.")
+                
+                st.divider()
+                st.subheader("Painel de Saldo Dinâmico")
+                cliente_saldo_sel = st.selectbox("Selecione o Cliente para ver o saldo:", clientes_lista)
+                
+                if cliente_saldo_sel:
+                    # Cálculo em tempo real do saldo
+                    info_cli = df_clientes[df_clientes['nome'] == cliente_saldo_sel].iloc[0]
+                    saldo_anual_contratado = info_cli['saldo_horas']
+                    
+                    horas_consumidas_ano = 0
+                    if not df_apt_full.empty:
+                        df_apt_full['data'] = pd.to_datetime(df_apt_full['data'])
+                        ano_atual = date.today().year
+                        df_cli_ano = df_apt_full[(df_apt_full['cliente'] == cliente_saldo_sel) & (df_apt_full['data'].dt.year == ano_atual)]
+                        horas_consumidas_ano = df_cli_ano['horas'].sum()
+                        
+                    saldo_restante = saldo_anual_contratado - horas_consumidas_ano
+                    
+                    mc1, mc2, mc3 = st.columns(3)
+                    mc1.metric("Saldo Anual Contratado", f"{saldo_anual_contratado}h")
+                    mc2.metric("Horas Consumidas no Ano", f"{horas_consumidas_ano}h")
+                    mc3.metric("Saldo Restante", f"{saldo_restante}h", delta=f"{(saldo_restante/saldo_anual_contratado)*100:.1f}%" if saldo_anual_contratado>0 else "0%")
+
+                st.divider()
+                st.write("**Histórico de Lançamentos (Editar/Excluir)**")
+                if not df_apt_full.empty:
+                    # Configuração para o Grid
+                    df_apt_edit = df_apt_full.copy()
+                    df_apt_edit['data'] = pd.to_datetime(df_apt_edit['data']).dt.date
+                    
+                    col_config_apt = {
+                        "id": None, "user_id": None,
+                        "data": st.column_config.DateColumn("Data", required=True, format="DD/MM/YYYY"),
+                        "cliente": st.column_config.SelectboxColumn("Cliente", options=clientes_lista),
+                        "chamado": st.column_config.TextColumn("Chamado", max_chars=20),
+                        "projeto": st.column_config.TextColumn("Projeto"),
+                        "descricao": st.column_config.TextColumn("Descrição"),
+                        "recurso": st.column_config.SelectboxColumn("Recurso", options=["Funcional", "ABAP"]),
+                        "horas": st.column_config.NumberColumn("Horas", required=True, format="%.2f")
+                    }
+                    
+                    with st.form("edit_apontamentos"):
+                        st.info("Para apagar uma linha, selecione a lateral esquerda e aperte `Delete`.")
+                        ed_apt = st.data_editor(df_apt_edit, use_container_width=True, hide_index=True, column_config=col_config_apt)
+                        
+                        if st.form_submit_button("Salvar Edições"):
+                            atualizar_apontamentos(USER_ID, ed_apt)
+                            st.success("Histórico atualizado!")
+                            st.rerun()
+                else:
+                    st.info("Ainda não há lançamentos registrados.")
+
+        with t2:
+            st.subheader("Extrato de Cliente")
+            if not clientes_lista:
+                st.warning("Cadastre um cliente primeiro.")
+            else:
+                df_apt_extrato = ler_apontamentos(USER_ID)
+                
+                if not df_apt_extrato.empty:
+                    df_apt_extrato['data'] = pd.to_datetime(df_apt_extrato['data'])
+                    
+                    hoje = date.today()
+                    meses_dict = {
+                        1: "01 - Janeiro", 2: "02 - Fevereiro", 3: "03 - Março", 4: "04 - Abril",
+                        5: "05 - Maio", 6: "06 - Junho", 7: "07 - Julho", 8: "08 - Agosto",
+                        9: "09 - Setembro", 10: "10 - Outubro", 11: "11 - Novembro", 12: "12 - Dezembro"
+                    }
+                    
+                    anos_apt = df_apt_extrato['data'].dt.year.unique().tolist()
+                    
+                    cx1, cx2, cx3 = st.columns(3)
+                    ext_cliente = cx1.selectbox("Filtrar Cliente:", clientes_lista)
+                    ext_mes = cx2.selectbox("Mês:", list(meses_dict.values()), index=hoje.month - 1)
+                    ext_ano = cx3.selectbox("Ano:", sorted(anos_apt, reverse=True))
+                    
+                    mes_num = list(meses_dict.keys())[list(meses_dict.values()).index(ext_mes)]
+                    
+                    df_final = df_apt_extrato[(df_apt_extrato['cliente'] == ext_cliente) & 
+                                              (df_apt_extrato['data'].dt.month == mes_num) & 
+                                              (df_apt_extrato['data'].dt.year == ext_ano)]
+                                              
+                    if not df_final.empty:
+                        total_horas = df_final['horas'].sum()
+                        taxa_hora = df_clientes[df_clientes['nome'] == ext_cliente].iloc[0]['valor_hora']
+                        valor_faturar = total_horas * taxa_hora
+                        
+                        m1, m2 = st.columns(2)
+                        m1.metric("Horas Trabalhadas no Mês", f"{total_horas}h")
+                        m2.metric("Valor a Faturar do Cliente", f"R$ {formatar_moeda(valor_faturar)}")
+                        
+                        st.divider()
+                        
+                        g1, g2 = st.columns(2)
+                        with g1:
+                            df_rec = df_final.groupby('recurso')['horas'].sum().reset_index()
+                            fig_rec = px.pie(df_rec, values='horas', names='recurso', hole=0.5, title="Distribuição por Recurso")
+                            fig_rec.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
+                            st.plotly_chart(fig_rec, use_container_width=True)
+                            
+                        with g2:
+                            df_dia = df_final.groupby(df_final['data'].dt.strftime('%d/%m'))['horas'].sum().reset_index()
+                            fig_dia = px.bar(df_dia, x='data', y='horas', title="Consumo Diário de Horas")
+                            fig_dia.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
+                            st.plotly_chart(fig_dia, use_container_width=True)
+                        
+                        st.write("**Extrato Detalhado para o Cliente:**")
+                        df_display = df_final[['data', 'chamado', 'projeto', 'descricao', 'recurso', 'horas']].copy()
+                        df_display['data'] = df_display['data'].dt.strftime('%d/%m/%Y')
+                        st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Nenhum apontamento para este cliente neste período.")
+                else:
+                    st.info("Faça o seu primeiro apontamento na aba ao lado.")
+                    
+        with t3:
+            st.subheader("Gerenciar Clientes e Franquias")
+            st.write("Adicione novos clientes informando o Saldo Anual de horas e a sua Taxa base.")
+            
+            df_clientes_edit = df_clientes.copy() if not df_clientes.empty else pd.DataFrame(columns=['id', 'nome', 'saldo_horas', 'valor_hora'])
+            
+            col_config_cli = {
+                "id": None,
+                "nome": st.column_config.TextColumn("Nome do Cliente", required=True),
+                "saldo_horas": st.column_config.NumberColumn("Saldo Anual (Horas)", required=True),
+                "valor_hora": st.column_config.NumberColumn("Valor Hora (R$)", required=True, format="%.2f")
+            }
+            
+            with st.form("form_clientes"):
+                ed_cli = st.data_editor(
+                    df_clientes_edit, 
+                    num_rows="dynamic", 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    column_config=col_config_cli
+                )
+                
+                if st.form_submit_button("💾 Salvar Clientes", type="primary"):
+                    atualizar_clientes(USER_ID, ed_cli)
+                    st.success("Lista de clientes atualizada com sucesso!")
+                    st.rerun()
 
     elif menu == "Configurações":
         st.title("⚙️ Configurações Gerais")
