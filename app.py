@@ -74,14 +74,12 @@ def carregar_tema():
         cor_input = "#262730"
         cor_accent = "#8B5CF6" 
         cor_borda = "rgba(255,255,255,0.1)"
-        cor_grafico = "#8B5CF6"
     else:
         cor_fundo = "#F0F2F6"
         cor_texto = "#111827"
         cor_input = "#FFFFFF"
         cor_accent = "#007BFF" 
         cor_borda = "rgba(0,0,0,0.1)"
-        cor_grafico = "#007BFF"
 
     css = f"""
     <style>
@@ -145,9 +143,8 @@ def carregar_tema():
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
-    return cor_grafico
 
-cor_grafico_atual = carregar_tema()
+carregar_tema()
 
 # --- 5. INICIALIZAÇÃO DA SESSÃO ---
 if 'logged_in' not in st.session_state:
@@ -678,11 +675,9 @@ def main_app():
                     
                     mes_num = list(meses_dict.keys())[list(meses_dict.values()).index(ext_mes)]
                     
-                    # Filtra os dados do Ano selecionado para o Gráfico de Barras
                     df_ano_grafico = df_apt_extrato[(df_apt_extrato['cliente'] == ext_cliente) & 
                                                     (df_apt_extrato['data'].dt.year == ext_ano)]
                                                     
-                    # Filtra os dados do Mês selecionado para a Tabela e Pizza
                     df_mes_detalhe = df_ano_grafico[df_ano_grafico['data'].dt.month == mes_num]
                                               
                     if not df_ano_grafico.empty:
@@ -706,7 +701,6 @@ def main_app():
                                 st.info(f"Sem horas lançadas em {ext_mes}.")
                                 
                         with g2:
-                            # --- NOVO: Lógica do Gráfico de Barras Mensal ao longo do Ano ---
                             df_evolucao = df_ano_grafico.copy()
                             df_evolucao['mes_num'] = df_evolucao['data'].dt.month
                             df_grp = df_evolucao.groupby('mes_num')['horas'].sum().reset_index()
@@ -715,11 +709,11 @@ def main_app():
                             df_grp['Mês'] = df_grp['mes_num'].map(map_meses)
                             df_grp = df_grp.sort_values('mes_num')
                             
-                            fig_ano = px.bar(df_grp, x='Mês', y='horas', title=f"Evolução Mensal do Consumo ({ext_ano})", text_auto='.1f')
-                            fig_ano.update_traces(marker_color=cor_grafico_atual)
+                            # --- AJUSTE: Mês definido como cor para gerar barras coloridas ---
+                            fig_ano = px.bar(df_grp, x='Mês', y='horas', color='Mês', title=f"Evolução Mensal do Consumo ({ext_ano})", text_auto='.1f')
                             fig_ano.update_xaxes(title="")
                             fig_ano.update_yaxes(title="")
-                            fig_ano.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA")
+                            fig_ano.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#FAFAFA", showlegend=False) # Esconde legenda redundante
                             st.plotly_chart(fig_ano, use_container_width=True)
                         
                         st.write(f"**Extrato Detalhado para o Cliente ({ext_mes}):**")
@@ -869,7 +863,7 @@ def main_app():
                     st.session_state['categorias'] = novas_categorias
                     salvar_categorias_db(USER_ID, novas_categorias)
                     
-                    st.success("Lista de Categorias atualizada com sucesso no banco de dados!")
+                    st.success("Lista de Categorias atualizada com sucesso! banco de dados!")
                     st.rerun()
 
 if not st.session_state['logged_in']: tela_login()
