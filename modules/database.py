@@ -6,7 +6,6 @@ import streamlit as st
 
 # --- NOVA CONEXÃO (PostgreSQL via Streamlit Secrets) ---
 def conectar():
-    # Ele vai usar a mesma URL de banco de dados que o Gerenciador de Tarefas já usa
     return psycopg2.connect(st.secrets["DB_URL"])
 
 def hash_senha(senha):
@@ -17,7 +16,7 @@ def inicializar_db():
     conn = conectar()
     c = conn.cursor()
     
-    # 1. Tabela de Usuários (Ajustado para sintaxe Postgres: SERIAL)
+    # 1. Tabela de Usuários
     c.execute('''CREATE TABLE IF NOT EXISTS usuarios (
                     id SERIAL PRIMARY KEY,
                     username TEXT UNIQUE,
@@ -25,14 +24,14 @@ def inicializar_db():
                     senha TEXT,
                     nome TEXT)''')
 
-    # 2. Categorias (Já possui user_id)
+    # 2. Categorias
     c.execute('''CREATE TABLE IF NOT EXISTS categorias (
                     id SERIAL PRIMARY KEY,
                     nome TEXT,
                     tipo TEXT,
                     user_id INTEGER)''') 
 
-    # 3. Recorrências (Ajustado BOOLEAN/INTEGER)
+    # 3. Recorrências
     c.execute('''CREATE TABLE IF NOT EXISTS recorrencias (
                     id SERIAL PRIMARY KEY,
                     nome TEXT,
@@ -56,8 +55,28 @@ def inicializar_db():
                     origem_recorrencia_id INTEGER,
                     user_id INTEGER)''')
     
-    # --- NOVO: Adiciona a coluna para salvar o arquivo de comprovante de forma segura ---
     c.execute('''ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS comprovante BYTEA''')
+    
+    # --- NOVAS TABELAS: GESTÃO DE PROJETOS (TIMESHEET) ---
+    # 5. Clientes
+    c.execute('''CREATE TABLE IF NOT EXISTS clientes (
+                    id SERIAL PRIMARY KEY,
+                    nome TEXT,
+                    saldo_horas REAL,
+                    valor_hora REAL,
+                    user_id INTEGER)''')
+                    
+    # 6. Apontamentos
+    c.execute('''CREATE TABLE IF NOT EXISTS apontamentos (
+                    id SERIAL PRIMARY KEY,
+                    data DATE,
+                    cliente TEXT,
+                    chamado TEXT,
+                    projeto TEXT,
+                    descricao TEXT,
+                    recurso TEXT,
+                    horas REAL,
+                    user_id INTEGER)''')
     
     conn.commit()
     conn.close()
@@ -67,13 +86,12 @@ def criar_usuario(username, email, senha, nome):
     conn = conectar()
     c = conn.cursor()
     try:
-        # Postgres usa %s em vez de ?
         c.execute("INSERT INTO usuarios (username, email, senha, nome) VALUES (%s, %s, %s, %s)", 
                      (username, email, hash_senha(senha), nome))
         conn.commit()
         return "Sucesso"
     except psycopg2.IntegrityError as e:
-        conn.rollback() # Necessário no Postgres em caso de erro
+        conn.rollback()
         erro = str(e)
         if "username" in erro:
             return "Erro: Este usuário já existe."
@@ -86,7 +104,6 @@ def criar_usuario(username, email, senha, nome):
 def verificar_login(username, senha):
     conn = conectar()
     c = conn.cursor()
-    # --- NOVO: Uso de LOWER() para ignorar letras maiúsculas e minúsculas no usuário e no e-mail ---
     c.execute("SELECT id, nome FROM usuarios WHERE (LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s)) AND senha = %s", 
                        (username, username, hash_senha(senha)))
     res = c.fetchone()
@@ -117,7 +134,6 @@ def processar_recorrencias(user_id):
         rec_id, nome, valor, dia, cat, tipo, ativo, data_limite, uid = rec
         
         if data_limite:
-            # Garante que data_limite é tratada corretamente seja string ou objeto date
             data_lim_str = str(data_limite)[:10]
             data_lim_obj = datetime.strptime(data_lim_str, "%Y-%m-%d").date()
             primeiro_dia_mes_atual = date(hoje.year, hoje.month, 1)
@@ -131,7 +147,6 @@ def processar_recorrencias(user_id):
             ultimo = monthrange(hoje.year, hoje.month)[1]
             data_vencimento = f"{mes_atual}-{ultimo:02d}"
         
-        # O to_char é a versão Postgres do strftime
         c.execute("""
             SELECT count(*) FROM transacoes 
             WHERE origem_recorrencia_id = %s AND to_char(data, 'YYYY-MM') = %s AND user_id = %s
@@ -204,13 +219,11 @@ def atualizar_recorrencias(user_id, df_novo):
     conn.commit()
     conn.close()
 
-# --- NOVO: LÓGICA DE CONFIRMAÇÃO COM ANEXO ---
 def confirmar_transacao(transacao_id, data_real, comprovante_bytes=None):
     conn = conectar()
     c = conn.cursor()
     
     if comprovante_bytes:
-        # psycopg2.Binary protege o arquivo e salva como BYTEA
         c.execute("UPDATE transacoes SET status = 'Pago', data = %s, comprovante = %s WHERE id = %s", 
                   (data_real, psycopg2.Binary(comprovante_bytes), transacao_id))
     else:
@@ -220,12 +233,10 @@ def confirmar_transacao(transacao_id, data_real, comprovante_bytes=None):
     conn.commit()
     conn.close()
 
-# --- ATUALIZAR/EXCLUIR TRANSAÇÕES MANUAIS ---
 def atualizar_transacoes(user_id, df_novo):
     conn = conectar()
     c = conn.cursor()
     
-    # 1. DELETAR AS LINHAS QUE FORAM EXCLUÍDAS NA TELA
     if 'id' in df_novo.columns:
         ids_mantidos = df_novo['id'].dropna().astype(int).tolist()
         if ids_mantidos:
@@ -235,14 +246,11 @@ def atualizar_transacoes(user_id, df_novo):
         else:
             c.execute("DELETE FROM transacoes WHERE user_id = %s", (user_id,))
 
-    # 2. INSERIR NOVAS E ATUALIZAR AS EXISTENTES
     registros = df_novo.to_dict('records')
     
     for row in registros:
         data_val = row.get('data')
-        if pd.isna(data_val):
-            continue 
-        
+        if pd.isna(data_val): continue 
         data_str = str(data_val)[:10] 
         
         if pd.isna(row.get('id')):
@@ -260,7 +268,6 @@ def atualizar_transacoes(user_id, df_novo):
     conn.commit()
     conn.close()
 
-# --- GERENCIAMENTO DE CATEGORIAS POR USUÁRIO ---
 def ler_categorias_db(user_id):
     conn = conectar()
     c = conn.cursor()
@@ -278,12 +285,88 @@ def ler_categorias_db(user_id):
 def salvar_categorias_db(user_id, categorias_lista):
     conn = conectar()
     c = conn.cursor()
-    
     c.execute("DELETE FROM categorias WHERE user_id = %s", (user_id,))
-    
     for cat in categorias_lista:
         if cat and cat.strip() != "":
             c.execute("INSERT INTO categorias (nome, user_id) VALUES (%s, %s)", (cat.strip(), user_id))
-            
+    conn.commit()
+    conn.close()
+
+# --- NOVAS FUNÇÕES: GESTÃO DE PROJETOS E TIMESHEET ---
+def ler_clientes(user_id):
+    conn = conectar()
+    df = pd.read_sql("SELECT * FROM clientes WHERE user_id = %(user_id)s ORDER BY nome ASC", conn, params={'user_id': user_id})
+    conn.close()
+    return df
+
+def adicionar_cliente(user_id, nome, saldo_horas, valor_hora):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("INSERT INTO clientes (nome, saldo_horas, valor_hora, user_id) VALUES (%s, %s, %s, %s)", 
+              (nome, saldo_horas, valor_hora, user_id))
+    conn.commit()
+    conn.close()
+
+def atualizar_clientes(user_id, df_novo):
+    conn = conectar()
+    c = conn.cursor()
+    if 'id' in df_novo.columns:
+        ids_mantidos = df_novo['id'].dropna().astype(int).tolist()
+        if ids_mantidos:
+            marcadores = ','.join(['%s'] * len(ids_mantidos))
+            c.execute(f"DELETE FROM clientes WHERE user_id = %s AND id NOT IN ({marcadores})", [user_id] + ids_mantidos)
+        else:
+            c.execute("DELETE FROM clientes WHERE user_id = %s", (user_id,))
+
+    registros = df_novo.to_dict('records')
+    for row in registros:
+        if pd.isna(row.get('id')):
+             c.execute("INSERT INTO clientes (nome, saldo_horas, valor_hora, user_id) VALUES (%s, %s, %s, %s)", 
+                       (row['nome'], row['saldo_horas'], row['valor_hora'], user_id))
+        else:
+             c.execute("UPDATE clientes SET nome = %s, saldo_horas = %s, valor_hora = %s WHERE id = %s AND user_id = %s", 
+                       (row['nome'], row['saldo_horas'], row['valor_hora'], row['id'], user_id))
+    conn.commit()
+    conn.close()
+
+def ler_apontamentos(user_id):
+    conn = conectar()
+    df = pd.read_sql("SELECT * FROM apontamentos WHERE user_id = %(user_id)s ORDER BY data DESC", conn, params={'user_id': user_id})
+    conn.close()
+    return df
+
+def adicionar_apontamento(user_id, data, cliente, chamado, projeto, descricao, recurso, horas):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("""INSERT INTO apontamentos (data, cliente, chamado, projeto, descricao, recurso, horas, user_id) 
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""", 
+              (data, cliente, chamado, projeto, descricao, recurso, horas, user_id))
+    conn.commit()
+    conn.close()
+
+def atualizar_apontamentos(user_id, df_novo):
+    conn = conectar()
+    c = conn.cursor()
+    if 'id' in df_novo.columns:
+        ids_mantidos = df_novo['id'].dropna().astype(int).tolist()
+        if ids_mantidos:
+            marcadores = ','.join(['%s'] * len(ids_mantidos))
+            c.execute(f"DELETE FROM apontamentos WHERE user_id = %s AND id NOT IN ({marcadores})", [user_id] + ids_mantidos)
+        else:
+            c.execute("DELETE FROM apontamentos WHERE user_id = %s", (user_id,))
+
+    registros = df_novo.to_dict('records')
+    for row in registros:
+        data_str = str(row.get('data'))[:10] if not pd.isna(row.get('data')) else None
+        if not data_str: continue
+        
+        if pd.isna(row.get('id')):
+             c.execute("""INSERT INTO apontamentos (data, cliente, chamado, projeto, descricao, recurso, horas, user_id) 
+                          VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""", 
+                       (data_str, row['cliente'], row['chamado'], row['projeto'], row['descricao'], row['recurso'], row['horas'], user_id))
+        else:
+             c.execute("""UPDATE apontamentos SET data=%s, cliente=%s, chamado=%s, projeto=%s, descricao=%s, recurso=%s, horas=%s 
+                          WHERE id=%s AND user_id=%s""", 
+                       (data_str, row['cliente'], row['chamado'], row['projeto'], row['descricao'], row['recurso'], row['horas'], row['id'], user_id))
     conn.commit()
     conn.close()
