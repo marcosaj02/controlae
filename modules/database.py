@@ -56,6 +56,9 @@ def inicializar_db():
                     origem_recorrencia_id INTEGER,
                     user_id INTEGER)''')
     
+    # --- NOVO: Adiciona a coluna para salvar o arquivo de comprovante de forma segura ---
+    c.execute('''ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS comprovante BYTEA''')
+    
     conn.commit()
     conn.close()
 
@@ -83,7 +86,8 @@ def criar_usuario(username, email, senha, nome):
 def verificar_login(username, senha):
     conn = conectar()
     c = conn.cursor()
-    c.execute("SELECT id, nome FROM usuarios WHERE (username = %s OR email = %s) AND senha = %s", 
+    # --- NOVO: Uso de LOWER() para ignorar letras maiúsculas e minúsculas no usuário e no e-mail ---
+    c.execute("SELECT id, nome FROM usuarios WHERE (LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s)) AND senha = %s", 
                        (username, username, hash_senha(senha)))
     res = c.fetchone()
     conn.close()
@@ -200,10 +204,19 @@ def atualizar_recorrencias(user_id, df_novo):
     conn.commit()
     conn.close()
 
-def confirmar_transacao(transacao_id, data_real):
+# --- NOVO: LÓGICA DE CONFIRMAÇÃO COM ANEXO ---
+def confirmar_transacao(transacao_id, data_real, comprovante_bytes=None):
     conn = conectar()
     c = conn.cursor()
-    c.execute("UPDATE transacoes SET status = 'Pago', data = %s WHERE id = %s", (data_real, transacao_id))
+    
+    if comprovante_bytes:
+        # psycopg2.Binary protege o arquivo e salva como BYTEA
+        c.execute("UPDATE transacoes SET status = 'Pago', data = %s, comprovante = %s WHERE id = %s", 
+                  (data_real, psycopg2.Binary(comprovante_bytes), transacao_id))
+    else:
+        c.execute("UPDATE transacoes SET status = 'Pago', data = %s WHERE id = %s", 
+                  (data_real, transacao_id))
+        
     conn.commit()
     conn.close()
 
@@ -247,7 +260,7 @@ def atualizar_transacoes(user_id, df_novo):
     conn.commit()
     conn.close()
 
-# --- NOVAS FUNÇÕES: GERENCIAMENTO DE CATEGORIAS POR USUÁRIO ---
+# --- GERENCIAMENTO DE CATEGORIAS POR USUÁRIO ---
 def ler_categorias_db(user_id):
     conn = conectar()
     c = conn.cursor()
@@ -256,7 +269,6 @@ def ler_categorias_db(user_id):
     conn.close()
     
     if not rows:
-        # Se o usuário não tem categorias configuradas, retorna as opções padrão e já salva no banco
         padroes = ["Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Impostos", "Receita", "Outros", "Parcelamentos", "Esportes"]
         salvar_categorias_db(user_id, padroes)
         return padroes
@@ -267,10 +279,8 @@ def salvar_categorias_db(user_id, categorias_lista):
     conn = conectar()
     c = conn.cursor()
     
-    # Apaga as categorias antigas deste usuário para não duplicar
     c.execute("DELETE FROM categorias WHERE user_id = %s", (user_id,))
     
-    # Insere a nova lista atualizada
     for cat in categorias_lista:
         if cat and cat.strip() != "":
             c.execute("INSERT INTO categorias (nome, user_id) VALUES (%s, %s)", (cat.strip(), user_id))
